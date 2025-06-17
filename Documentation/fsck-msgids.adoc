@@ -84,7 +84,10 @@
 	(ERROR) Unable to read `.gitattributes` blob.
 
 `gitattributesSymlink`::
-	(INFO) `.gitattributes` is a symlink.
+        (INFO) `.gitattributes` is a symlink.
+
+`chunkMissing`::
+        (ERROR) Blob references a missing chunk object.
 
 `gitignoreSymlink`::
 	(INFO) `.gitignore` is a symlink.

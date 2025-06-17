@@ -15,6 +15,7 @@
 #include "list-objects-filter-options.h"
 #include "packfile.h"
 #include "object-store.h"
+#include "bup-chunk.h"
 #include "trace.h"
 #include "environment.h"
 
@@ -87,8 +88,38 @@ static void process_blob(struct traversal_context *ctx,
 					       ctx->filter);
 	if (r & LOFR_MARK_SEEN)
 		obj->flags |= SEEN;
-	if (r & LOFR_DO_SHOW)
-		show_object(ctx, obj, path->buf);
+        if (r & LOFR_DO_SHOW) {
+                show_object(ctx, obj, path->buf);
+                if (ctx->revs->repo && bup_chunking_enabled()) {
+                        enum object_type type;
+                        unsigned long size;
+                        void *buf = repo_read_object_file(ctx->revs->repo,
+                                                          &blob->object.oid,
+                                                          &type, &size);
+                        if (buf && type == OBJ_BLOB &&
+                            bup_is_chunk_list(buf, size,
+                                             ctx->revs->repo->hash_algo->hexsz)) {
+                                const char *p = buf;
+                                struct object_id coid;
+                                unsigned hexsz = ctx->revs->repo->hash_algo->hexsz;
+
+                                while (size >= hexsz) {
+                                        if (get_oid_hex_algop(p, &coid,
+                                                              ctx->revs->repo->hash_algo))
+                                                break;
+                                        show_object(ctx,
+                                                    (struct object *)lookup_blob(ctx->revs->repo,
+                                                                                &coid),
+                                                    path->buf);
+                                        p += hexsz;
+                                        size -= hexsz;
+                                        if (size && *p == '\n') {
+                                                p++; size--; }
+                                }
+                        }
+                        free(buf);
+                }
+        }
 	strbuf_setlen(path, pathlen);
 }
 

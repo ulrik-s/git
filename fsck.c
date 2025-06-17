@@ -16,6 +16,7 @@
 #include "tag.h"
 #include "fsck.h"
 #include "refs.h"
+#include "bup-chunk.h"
 #include "url.h"
 #include "utf8.h"
 #include "oidset.h"
@@ -1173,7 +1174,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 		ret |= data.ret;
 	}
 
-	if (oidset_contains(&options->gitattributes_found, oid)) {
+        if (oidset_contains(&options->gitattributes_found, oid)) {
 		const char *ptr;
 
 		oidset_insert(&options->gitattributes_done, oid);
@@ -1187,7 +1188,27 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 			return report(options, oid, OBJ_BLOB,
 					FSCK_MSG_GITATTRIBUTES_LARGE,
 					".gitattributes too large to parse");
-		}
+        }
+
+        if (bup_chunking_enabled() && buf &&
+            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
+                const char *p = buf;
+                struct object_id coid;
+                unsigned hexsz = the_repository->hash_algo->hexsz;
+
+                while (size >= hexsz) {
+                        if (get_oid_hex_algop(p, &coid, the_repository->hash_algo))
+                                break;
+                        if (!has_object(the_repository, &coid, 0))
+                                ret |= report(options, oid, OBJ_BLOB,
+                                              FSCK_MSG_CHUNK_MISSING,
+                                              "missing chunk %s",
+                                              oid_to_hex(&coid));
+                        p += hexsz;
+                        size -= hexsz;
+                        if (size && *p == '\n') { p++; size--; }
+                }
+        }
 
 		for (ptr = buf; *ptr; ) {
 			const char *eol = strchrnul(ptr, '\n');
