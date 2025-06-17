@@ -32,7 +32,7 @@ test_expect_success 'random 10-byte modifications committed 100 times' '
 	for i in $(test_seq 1 100)
 	do
 	off=$(perl -e "srand($i); print int(rand(100000-10));") &&
-	test-tool genrandom seed$i 10 | dd of=file bs=1 seek=$off count=10 conv=notrunc &&
+       test-tool genrandom seed$i 10 | dd of=file bs=1 seek=$off count=10 conv=notrunc 2>/dev/null &&
 	git add file &&
 	git commit -m "update $i" &&
 	oid=$(git rev-parse HEAD:file) &&
