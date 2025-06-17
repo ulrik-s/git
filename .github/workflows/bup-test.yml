@@ -1,0 +1,20 @@
+name: bup-storage-test
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  bup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: ci/install-dependencies.sh
+      - run: make
+      - run: |
+          cd t && \
+          ./t0000-basic.sh && \
+          ./t0001-init.sh && \
+          ./t9904-bup-storage.sh
