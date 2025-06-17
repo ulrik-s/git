@@ -7,6 +7,8 @@ on:
 jobs:
   bup:
     runs-on: ubuntu-latest
+    env:
+      CI_JOB_IMAGE: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
