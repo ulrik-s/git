@@ -11,6 +11,7 @@
 #include "repository.h"
 #include "object-file.h"
 #include "object-store.h"
+#include "bup-chunk.h"
 #include "replace-object.h"
 #include "packfile.h"
 
@@ -469,18 +470,21 @@ struct git_istream *open_istream(struct repository *r,
 {
 	struct git_istream *st = xmalloc(sizeof(*st));
 	const struct object_id *real = lookup_replace_object(r, oid);
-	int ret = istream_source(st, r, real, type);
+       int ret = istream_source(st, r, real, type);
 
 	if (ret) {
 		free(st);
 		return NULL;
 	}
 
-	if (st->open(st, r, real, type)) {
-		if (open_istream_incore(st, r, real, type)) {
-			free(st);
-			return NULL;
-		}
+       if (*type == OBJ_BLOB && bup_chunking_enabled())
+	       st->open = open_istream_incore;
+
+       if (st->open(st, r, real, type)) {
+	       if (open_istream_incore(st, r, real, type)) {
+		       free(st);
+		       return NULL;
+	       }
 	}
 	if (filter) {
 		/* Add "&& !is_null_stream_filter(filter)" for performance */
