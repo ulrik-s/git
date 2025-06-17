@@ -35,7 +35,8 @@ test_expect_success 'random 10-byte modifications committed 100 times' '
 	test-tool genrandom seed$i 10 | dd of=file bs=1 seek=$off count=10 conv=notrunc &&
 	git add file &&
 	git commit -m "update $i" &&
-	git cat-file -p HEAD:file >../chunks &&
+	oid=$(git rev-parse HEAD:file) &&
+	GIT_BUP_CHUNKING= git cat-file -p "$oid" >../chunks &&
 	uniq=0 && reuse=0 &&
 	while read c
 	do

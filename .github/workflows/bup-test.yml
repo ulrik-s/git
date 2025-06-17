@@ -19,4 +19,5 @@ jobs:
           cd t && \
           ./t0000-basic.sh && \
           ./t0001-init.sh && \
-          ./t9904-bup-storage.sh
+          ./t9904-bup-storage.sh && \
+          ./t9905-bup-chunk-reuse.sh
