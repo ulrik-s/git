@@ -93,7 +93,7 @@ static void process_blob(struct traversal_context *ctx,
                 if (ctx->revs->repo && bup_chunking_enabled()) {
                         enum object_type type;
                         unsigned long size;
-                        void *buf = repo_read_object_file(ctx->revs->repo,
+                       void *buf = repo_read_raw_object_file(ctx->revs->repo,
                                                           &blob->object.oid,
                                                           &type, &size);
                         if (buf && type == OBJ_BLOB &&

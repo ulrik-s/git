@@ -33,22 +33,37 @@ cleanup_repo() {
 # Set up repository
 
 test_expect_success 'setup repository with chunked blob' '
-	setup_repo
+       setup_repo
+'
+
+test_expect_success 'chunks exist before repack' '
+       (
+               cd "$TEST_REPO" &&
+               oid=$(git rev-parse HEAD:file) &&
+               git -c bup.chunking=false cat-file -p "$oid" >../chunks &&
+               cat ../chunks &&
+               git count-objects -v >../count && cat ../count &&
+               while read c; do
+                       git cat-file -p "$c" >/dev/null || return 1
+               done <../chunks
+       )
 '
 
 # Repack and verify chunks remain
 
 test_expect_success 'repack keeps chunk objects' '
-	(
-		cd "$TEST_REPO" &&
-		git repack -ad &&
-		git fsck --no-progress &&
-		oid=$(git rev-parse HEAD:file) &&
+       (
+               cd "$TEST_REPO" &&
+               git repack -ad &&
+               git fsck --no-progress >../fsck.out &&
+               cat ../fsck.out &&
+               oid=$(git rev-parse HEAD:file) &&
                git -c bup.chunking=false cat-file -p "$oid" >../chunks &&
-		while read c; do
-		git cat-file -p "$c" >/dev/null || return 1
-		done <../chunks
-	)
+               cat ../chunks &&
+               while read c; do
+                       git cat-file -p "$c" >/dev/null || return 1
+               done <../chunks
+       )
 '
 
 # Remove a chunk and expect fsck to fail

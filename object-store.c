@@ -861,9 +861,9 @@ int pretend_object_file(struct repository *repo,
  * error messages themselves.
  */
 void *repo_read_object_file(struct repository *r,
-			    const struct object_id *oid,
-			    enum object_type *type,
-			    unsigned long *size)
+                            const struct object_id *oid,
+                            enum object_type *type,
+                            unsigned long *size)
 {
 	struct object_info oi = OBJECT_INFO_INIT;
 	unsigned flags = OBJECT_INFO_DIE_IF_CORRUPT | OBJECT_INFO_LOOKUP_REPLACE;
@@ -887,6 +887,23 @@ void *repo_read_object_file(struct repository *r,
 	       data = strbuf_detach(&out, NULL);
        }
 
+       return data;
+}
+
+void *repo_read_raw_object_file(struct repository *r,
+                               const struct object_id *oid,
+                               enum object_type *type,
+                               unsigned long *size)
+{
+       struct object_info oi = OBJECT_INFO_INIT;
+       unsigned flags = OBJECT_INFO_DIE_IF_CORRUPT | OBJECT_INFO_LOOKUP_REPLACE;
+       void *data;
+
+       oi.typep = type;
+       oi.sizep = size;
+       oi.contentp = &data;
+       if (oid_object_info_extended(r, oid, &oi, flags))
+               return NULL;
        return data;
 }
 
