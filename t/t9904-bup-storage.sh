@@ -13,11 +13,11 @@ TEST_REPO=chunk-test
 test_expect_success 'setup repository with initial 100k file' '
 	test_create_repo "$TEST_REPO" &&
 	(
-	cd "$TEST_REPO" &&
-	export GIT_BUP_CHUNKING=1 &&
-	test-tool genrandom seed 100000 >file &&
-	git add file &&
-	git commit -m initial
+       cd "$TEST_REPO" &&
+       git config bup.chunking true &&
+       test-tool genrandom seed 100000 >file &&
+       git add file &&
+       git commit -m initial
 	)
 '
 
@@ -25,10 +25,10 @@ test_expect_success 'setup repository with initial 100k file' '
 
 test_expect_success 'random 10-byte modifications committed 100 times' '
 	(
-	cd "$TEST_REPO" &&
-	export GIT_BUP_CHUNKING=1 &&
-	: >../stats &&
-	: >../seen &&
+       cd "$TEST_REPO" &&
+       git config bup.chunking true &&
+       : >../stats &&
+       : >../seen &&
 	for i in $(test_seq 1 100)
 	do
 	off=$(perl -e "srand($i); print int(rand(100000-10));") &&

@@ -1,7 +1,11 @@
+#define USE_THE_REPOSITORY_VARIABLE
 #include "git-compat-util.h"
 #include "bup-chunk.h"
 #include "object-file.h"
 #include "environment.h"
+#include "config.h"
+#include "parse.h"
+#include "repository.h"
 #include "hex.h"
 
 #define BUP_WINDOWBITS   6
@@ -49,7 +53,18 @@ static uint32_t rollsum_digest(const struct rollsum *r)
 int bup_chunking_enabled(void)
 {
 	const char *e = getenv("GIT_BUP_CHUNKING");
-	return e && *e;
+	int v;
+
+	if (e)
+	return git_env_bool("GIT_BUP_CHUNKING", 0);
+
+	if (the_repository &&
+	!repo_config_get_bool(the_repository, "bup.chunking", &v))
+	return v;
+	if (!git_config_get_bool("bup.chunking", &v))
+	return v;
+
+	return 0;
 }
 
 static size_t bup_chunk_next(const unsigned char *data, size_t len)
