@@ -8,6 +8,7 @@
 #include "environment.h"
 #include "gettext.h"
 #include "hex.h"
+#include "bup-chunk.h"
 #include "khash.h"
 #include "lockfile.h"
 #include "loose.h"
@@ -868,13 +869,25 @@ void *repo_read_object_file(struct repository *r,
 	unsigned flags = OBJECT_INFO_DIE_IF_CORRUPT | OBJECT_INFO_LOOKUP_REPLACE;
 	void *data;
 
-	oi.typep = type;
-	oi.sizep = size;
-	oi.contentp = &data;
-	if (oid_object_info_extended(r, oid, &oi, flags))
-		return NULL;
+       oi.typep = type;
+       oi.sizep = size;
+       oi.contentp = &data;
+       if (oid_object_info_extended(r, oid, &oi, flags))
+	       return NULL;
+       if (type && *type == OBJ_BLOB && bup_chunking_enabled() &&
+	   bup_is_chunk_list(data, *size, r->hash_algo->hexsz)) {
+	       struct strbuf out = STRBUF_INIT;
+	       if (bup_dechunk_blob(r, data, *size, &out)) {
+		       strbuf_release(&out);
+		       free(data);
+		       return NULL;
+	       }
+	       free(data);
+	       *size = out.len;
+	       data = strbuf_detach(&out, NULL);
+       }
 
-	return data;
+       return data;
 }
 
 void *read_object_with_reference(struct repository *r,

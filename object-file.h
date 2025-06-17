@@ -170,6 +170,7 @@ enum {
 	 * Do not print an error in case something gose wrong.
 	 */
 	WRITE_OBJECT_FILE_SILENT = (1 << 1),
+       WRITE_OBJECT_FILE_NO_CHUNK = (1 << 2),
 };
 
 int write_object_file_flags(const void *buf, unsigned long len,
