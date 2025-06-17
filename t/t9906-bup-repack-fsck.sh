@@ -44,7 +44,7 @@ test_expect_success 'repack keeps chunk objects' '
 		git repack -ad &&
 		git fsck --no-progress &&
 		oid=$(git rev-parse HEAD:file) &&
-		GIT_BUP_CHUNKING= git cat-file -p "$oid" >../chunks &&
+               git -c bup.chunking=false cat-file -p "$oid" >../chunks &&
 		while read c; do
 		git cat-file -p "$c" >/dev/null || return 1
 		done <../chunks
@@ -59,7 +59,7 @@ test_expect_success 'fsck reports missing chunk' '
 	(
 		cd "$TEST_REPO" &&
 		oid=$(git rev-parse HEAD:file) &&
-		GIT_BUP_CHUNKING= git cat-file -p "$oid" >../chunks &&
+               git -c bup.chunking=false cat-file -p "$oid" >../chunks &&
 		first=$(head -n1 ../chunks) &&
 		path=$(test_oid_to_path $first) &&
 		rm -f .git/objects/$path &&
