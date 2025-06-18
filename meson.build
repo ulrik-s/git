@@ -288,6 +288,7 @@ libgit_sources = [
   'bloom.c',
   'branch.c',
   'bulk-checkin.c',
+  'bup-chunk.c',
   'bundle-uri.c',
   'bundle.c',
   'cache-tree.c',

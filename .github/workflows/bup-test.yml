@@ -22,4 +22,5 @@ jobs:
           ./t9904-bup-storage.sh -v && \
           ./t9905-bup-chunk-reuse.sh -v && \
           ./t9906-bup-repack-fsck.sh -v && \
-          ./t9907-bup-edit-loop.sh -v
+          ./t9907-bup-edit-loop.sh -v && \
+          ./t9909-bup-chunk-stats.sh -v

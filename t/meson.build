@@ -1102,6 +1102,7 @@ integration_tests = [
   't9906-bup-repack-fsck.sh',
   't9907-bup-edit-loop.sh',
   't9908-bup-gc-pack.sh',
+  't9909-bup-chunk-stats.sh',
 ]
 
 benchmarks = [
