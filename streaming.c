@@ -415,7 +415,11 @@ static int open_istream_incore(struct git_istream *st, struct repository *r,
                        return -1;
                }
                free(st->u.incore.buf);
-               st->u.incore.buf = strbuf_detach(&out, &st->size);
+               {
+                       size_t new_size;
+                       st->u.incore.buf = strbuf_detach(&out, &new_size);
+                       st->size = new_size;
+               }
        }
 
        return 0;
