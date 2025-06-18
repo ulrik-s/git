@@ -1097,6 +1097,11 @@ integration_tests = [
   't9901-git-web--browse.sh',
   't9902-completion.sh',
   't9903-bash-prompt.sh',
+  't9904-bup-storage.sh',
+  't9905-bup-chunk-reuse.sh',
+  't9906-bup-repack-fsck.sh',
+  't9907-bup-edit-loop.sh',
+  't9908-bup-gc-pack.sh',
 ]
 
 benchmarks = [
