@@ -1638,9 +1638,14 @@ int read_loose_object(const char *path,
 			       strbuf_release(&out);
 			       goto out_inflate;
 		       }
-		       free(*contents);
-		       *contents = strbuf_detach(&out, size);
-	       }
+free(*contents);
+{
+size_t new_size;
+*contents = strbuf_detach(&out, &new_size);
+if (size)
+*size = new_size;
+}
+}
 	}
 
 	ret = 0; /* everything checks out */
