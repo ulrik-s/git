@@ -393,19 +393,32 @@ static ssize_t read_istream_incore(struct git_istream *st, char *buf, size_t sz)
 }
 
 static int open_istream_incore(struct git_istream *st, struct repository *r,
-			       const struct object_id *oid, enum object_type *type)
+                               const struct object_id *oid, enum object_type *type)
 {
-	struct object_info oi = OBJECT_INFO_INIT;
+        struct object_info oi = OBJECT_INFO_INIT;
 
 	st->u.incore.read_ptr = 0;
 	st->close = close_istream_incore;
 	st->read = read_istream_incore;
 
-	oi.typep = type;
-	oi.sizep = &st->size;
-	oi.contentp = (void **)&st->u.incore.buf;
-	return oid_object_info_extended(r, oid, &oi,
-					OBJECT_INFO_DIE_IF_CORRUPT);
+       oi.typep = type;
+       oi.sizep = &st->size;
+       oi.contentp = (void **)&st->u.incore.buf;
+       if (oid_object_info_extended(r, oid, &oi, OBJECT_INFO_DIE_IF_CORRUPT))
+               return -1;
+
+       if (*type == OBJ_BLOB && bup_chunking_enabled() &&
+           bup_is_chunk_list(st->u.incore.buf, st->size, r->hash_algo->hexsz)) {
+               struct strbuf out = STRBUF_INIT;
+               if (bup_dechunk_blob(r, st->u.incore.buf, st->size, &out)) {
+                       strbuf_release(&out);
+                       return -1;
+               }
+               free(st->u.incore.buf);
+               st->u.incore.buf = strbuf_detach(&out, &st->size);
+       }
+
+       return 0;
 }
 
 /*****************************************************************************

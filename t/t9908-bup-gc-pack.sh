@@ -42,6 +42,19 @@ test_expect_success 'verify revisions before gc' '
     )
 '
 
+test_expect_success 'checkout each revision before gc' '
+    (
+        cd "$TEST_REPO" &&
+        for i in $(test_seq 0 9)
+        do
+            rev=$(cat ../rev$i) &&
+            git checkout -q $rev -- file &&
+            test_cmp ../file$i file || return 1 &&
+            git checkout -q HEAD -- file || return 1
+        done
+    )
+'
+
 test_expect_success 'expire reflog and run gc' '
     (
         cd "$TEST_REPO" &&
@@ -67,6 +80,19 @@ test_expect_success 'verify revisions after gc' '
             rev=$(cat ../rev$i) &&
             git archive --format=tar "$rev" file | tar xO >actual &&
             test_cmp ../file$i actual || return 1
+        done
+    )
+'
+
+test_expect_success 'checkout each revision after gc' '
+    (
+        cd "$TEST_REPO" &&
+        for i in $(test_seq 0 9)
+        do
+            rev=$(cat ../rev$i) &&
+            git checkout -q $rev -- file &&
+            test_cmp ../file$i file || return 1 &&
+            git checkout -q HEAD -- file || return 1
         done
     )
 '
