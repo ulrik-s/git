@@ -1103,6 +1103,7 @@ integration_tests = [
   't9907-bup-edit-loop.sh',
   't9908-bup-gc-pack.sh',
   't9909-bup-chunk-stats.sh',
+  't9910-bup-random-edits.sh',
 ]
 
 benchmarks = [
