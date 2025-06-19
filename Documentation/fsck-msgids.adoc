@@ -56,6 +56,9 @@
 `chunkMissing`::
         (ERROR) Blob references a missing chunk object.
 
+`chunkHashMismatch`::
+        (ERROR) Dechunked blob hash does not match value stored in chunk list.
+
 `duplicateEntries`::
         (ERROR) A tree contains duplicate file entries.
 

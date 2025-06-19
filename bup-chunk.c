@@ -15,6 +15,9 @@
 #define BUP_MAX_CHUNK    1048576
 #define BUP_MASK         ((1 << BUP_BLOB_BITS) - 1)
 
+#define BUP_HEADER "BUPCHUNK\n"
+#define BUP_HEADER_LEN 9
+
 #define ROLLSUM_CHAR_OFFSET 31
 
 struct rollsum {
@@ -86,72 +89,99 @@ static size_t bup_chunk_next(const unsigned char *data, size_t len)
 
 int bup_chunk_blob(const void *data, unsigned long len, struct strbuf *out)
 {
-	const unsigned char *buf = data;
-	size_t off = 0;
-	int first = 1;
+        const unsigned char *buf = data;
+        size_t off = 0;
+        int first = 1;
+        struct object_id full;
 
-	while (off < len) {
-		size_t chunk = bup_chunk_next(buf + off, len - off);
-		struct object_id oid;
+        hash_object_file(the_repository->hash_algo, data, len, OBJ_BLOB, &full);
+        strbuf_addstr(out, BUP_HEADER);
+        strbuf_addstr(out, oid_to_hex(&full));
+        strbuf_addch(out, '\n');
 
-	       if (write_object_file_flags(buf + off, chunk, OBJ_BLOB, &oid,
-					  NULL, WRITE_OBJECT_FILE_NO_CHUNK))
-		       return -1;
-		if (!first)
-			strbuf_addch(out, '\n');
-		strbuf_addstr(out, oid_to_hex(&oid));
-		off += chunk;
-		first = 0;
-	}
-	return 0;
+        while (off < len) {
+                size_t chunk = bup_chunk_next(buf + off, len - off);
+                struct object_id oid;
+
+               if (write_object_file_flags(buf + off, chunk, OBJ_BLOB, &oid,
+                                          NULL, WRITE_OBJECT_FILE_NO_CHUNK))
+                       return -1;
+                if (!first)
+                        strbuf_addch(out, '\n');
+                strbuf_addstr(out, oid_to_hex(&oid));
+                off += chunk;
+                first = 0;
+        }
+        return 0;
 }
 
 int bup_is_chunk_list(const char *buf, unsigned long len, int hexsz)
 {
-       unsigned long off = 0;
+       unsigned long off = 0, i;
+
+       if (len < BUP_HEADER_LEN + hexsz + 1)
+               return 0;
+       if (strncmp(buf, BUP_HEADER, BUP_HEADER_LEN))
+               return 0;
+       off = BUP_HEADER_LEN;
+       for (i = 0; i < (unsigned long)hexsz; i++)
+               if (!isxdigit(buf[off + i]))
+                       return 0;
+       off += hexsz;
+       if (buf[off] != '\n')
+               return 0;
+       off++;
 
        while (off < len) {
-	       unsigned long i;
-	       if (off + hexsz > len)
-		       return 0;
-	       for (i = 0; i < (unsigned long)hexsz; i++)
-		       if (!isxdigit(buf[off + i]))
-			       return 0;
-	       off += hexsz;
-	       if (off == len)
-		       break;
-	       if (buf[off] != '\n')
-		       return 0;
-	       off++;
+               if (off + hexsz > len)
+                       return 0;
+               for (i = 0; i < (unsigned long)hexsz; i++)
+                       if (!isxdigit(buf[off + i]))
+                               return 0;
+               off += hexsz;
+               if (off == len)
+                       break;
+               if (buf[off] != '\n')
+                       return 0;
+               off++;
        }
        return 1;
 }
 
 int bup_dechunk_blob(struct repository *r, const char *buf, unsigned long len,
-		     struct strbuf *out)
+                     struct strbuf *out)
 {
        int hexsz = r->hash_algo->hexsz;
        unsigned long off = 0;
 
-       while (off < len) {
-	       struct object_id oid;
-	       enum object_type type;
-	       unsigned long chunk_size;
-	       void *chunk;
+       if (len < BUP_HEADER_LEN + hexsz + 1)
+               return -1;
+       if (strncmp(buf, BUP_HEADER, BUP_HEADER_LEN))
+               return -1;
+       off = BUP_HEADER_LEN + hexsz;
+       if (buf[off] != '\n')
+               return -1;
+       off++;
 
-	       if (get_oid_hex_algop(buf + off, &oid, r->hash_algo))
-		       return -1;
-	       off += hexsz;
-	       if (off < len)
-		       off++; /* skip newline */
+       while (off < len) {
+               struct object_id oid;
+               enum object_type type;
+               unsigned long chunk_size;
+               void *chunk;
+
+               if (get_oid_hex_algop(buf + off, &oid, r->hash_algo))
+                       return -1;
+               off += hexsz;
+               if (off < len)
+                       off++; /* skip newline */
 
 	       chunk = repo_read_object_file(r, &oid, &type, &chunk_size);
 	       if (!chunk || type != OBJ_BLOB) {
 		       free(chunk);
 		       return -1;
 	       }
-	       strbuf_add(out, chunk, chunk_size);
-	       free(chunk);
+               strbuf_add(out, chunk, chunk_size);
+               free(chunk);
        }
        return 0;
 }

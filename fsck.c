@@ -17,6 +17,7 @@
 #include "fsck.h"
 #include "refs.h"
 #include "bup-chunk.h"
+#include "object-file.h"
 #include "url.h"
 #include "utf8.h"
 #include "oidset.h"
@@ -1190,25 +1191,46 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 					".gitattributes too large to parse");
         }
 
-        if (bup_chunking_enabled() && buf &&
-            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
-                const char *p = buf;
-                struct object_id coid;
-                unsigned hexsz = the_repository->hash_algo->hexsz;
+       if (bup_chunking_enabled() && buf &&
+           bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
+               const char *p = buf + BUP_HEADER_LEN;
+               struct object_id expect, coid, real;
+               unsigned hexsz = the_repository->hash_algo->hexsz;
+               struct strbuf out = STRBUF_INIT;
 
-                while (size >= hexsz) {
-                        if (get_oid_hex_algop(p, &coid, the_repository->hash_algo))
-                                break;
-                        if (!has_object(the_repository, &coid, 0))
-                                ret |= report(options, oid, OBJ_BLOB,
-                                              FSCK_MSG_CHUNK_MISSING,
-                                              "missing chunk %s",
-                                              oid_to_hex(&coid));
-                        p += hexsz;
-                        size -= hexsz;
-                        if (size && *p == '\n') { p++; size--; }
-                }
-        }
+               if (get_oid_hex_algop(p, &expect, the_repository->hash_algo))
+                       goto skip_hash;
+               p += hexsz;
+               if (p - buf < size && *p == '\n') { p++; }
+
+               if (bup_dechunk_blob(the_repository, buf, size, &out)) {
+                       strbuf_release(&out);
+                       goto skip_hash;
+               }
+               hash_object_file(the_repository->hash_algo, out.buf, out.len,
+                                OBJ_BLOB, &real);
+               if (!oideq(&real, &expect))
+                       ret |= report(options, oid, OBJ_BLOB,
+                                     FSCK_MSG_CHUNK_HASH_MISMATCH,
+                                     "chunk hash mismatch");
+               strbuf_release(&out);
+
+skip_hash:
+               while (p - buf < size) {
+                       if ((p - buf) + hexsz > size)
+                               break;
+                       if (get_oid_hex_algop(p, &coid, the_repository->hash_algo))
+                               break;
+                       if (!has_object(the_repository, &coid, 0))
+                               ret |= report(options, oid, OBJ_BLOB,
+                                             FSCK_MSG_CHUNK_MISSING,
+                                             "missing chunk %s",
+                                             oid_to_hex(&coid));
+                       p += hexsz;
+                       if (p - buf < size && *p == '\n')
+                               p++;
+               }
+       }
 
 		for (ptr = buf; *ptr; ) {
 			const char *eol = strchrnul(ptr, '\n');

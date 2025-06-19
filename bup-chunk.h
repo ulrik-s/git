@@ -8,6 +8,9 @@ int bup_chunking_enabled(void);
 int bup_chunk_blob(const void *data, unsigned long len, struct strbuf *out);
 int bup_is_chunk_list(const char *buf, unsigned long len, int hexsz);
 int bup_dechunk_blob(struct repository *r, const char *buf, unsigned long len,
-		     struct strbuf *out);
+                     struct strbuf *out);
+
+#define BUP_HEADER "BUPCHUNK\n"
+#define BUP_HEADER_LEN 9
 
 #endif /* BUP_CHUNK_H */

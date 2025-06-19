@@ -99,9 +99,12 @@ static void process_blob(struct traversal_context *ctx,
                         if (buf && type == OBJ_BLOB &&
                             bup_is_chunk_list(buf, size,
                                              ctx->revs->repo->hash_algo->hexsz)) {
-                                const char *p = buf;
+                                const char *p = buf + BUP_HEADER_LEN;
                                 struct object_id coid;
                                 unsigned hexsz = ctx->revs->repo->hash_algo->hexsz;
+
+                                p += hexsz + 1;
+                                size -= BUP_HEADER_LEN + hexsz + 1;
 
                                 while (size >= hexsz) {
                                         if (get_oid_hex_algop(p, &coid,
