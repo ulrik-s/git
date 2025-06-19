@@ -12,5 +12,6 @@ int bup_dechunk_blob(struct repository *r, const char *buf, unsigned long len,
 
 #define BUP_HEADER "BUPCHUNK\n"
 #define BUP_HEADER_LEN 9
+#define BUP_CHUNK_THRESHOLD 4096
 
 #endif /* BUP_CHUNK_H */

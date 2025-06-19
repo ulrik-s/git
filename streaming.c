@@ -446,39 +446,6 @@ static int open_istream_incore(struct git_istream *st, struct repository *r,
  * static helpers variables and functions for users of streaming interface
  *****************************************************************************/
 
-static int istream_source(struct git_istream *st,
-			  struct repository *r,
-			  const struct object_id *oid,
-			  enum object_type *type)
-{
-	unsigned long size;
-	int status;
-	struct object_info oi = OBJECT_INFO_INIT;
-
-	oi.typep = type;
-	oi.sizep = &size;
-	status = oid_object_info_extended(r, oid, &oi, 0);
-	if (status < 0)
-		return status;
-
-	switch (oi.whence) {
-	case OI_LOOSE:
-		st->open = open_istream_loose;
-		return 0;
-	case OI_PACKED:
-		if (!oi.u.packed.is_delta &&
-		    repo_settings_get_big_file_threshold(the_repository) < size) {
-			st->u.in_pack.pack = oi.u.packed.pack;
-			st->u.in_pack.pos = oi.u.packed.offset;
-			st->open = open_istream_pack_non_delta;
-			return 0;
-		}
-		/* fallthru */
-	default:
-		st->open = open_istream_incore;
-		return 0;
-	}
-}
 
 /****************************************************************
  * Users of streaming interface
@@ -497,29 +464,43 @@ ssize_t read_istream(struct git_istream *st, void *buf, size_t sz)
 }
 
 struct git_istream *open_istream(struct repository *r,
-				 const struct object_id *oid,
-				 enum object_type *type,
-				 unsigned long *size,
-				 struct stream_filter *filter)
+                                 const struct object_id *oid,
+                                 enum object_type *type,
+                                 unsigned long *size,
+                                 struct stream_filter *filter)
 {
-	struct git_istream *st = xmalloc(sizeof(*st));
-	const struct object_id *real = lookup_replace_object(r, oid);
-       int ret = istream_source(st, r, real, type);
+       struct git_istream *st = xmalloc(sizeof(*st));
+       const struct object_id *real = lookup_replace_object(r, oid);
+       unsigned long objsize;
+       struct object_info oi = OBJECT_INFO_INIT;
 
-	if (ret) {
-		free(st);
-		return NULL;
-	}
+       oi.typep = type;
+       oi.sizep = &objsize;
+       if (oid_object_info_extended(r, real, &oi, 0)) {
+               free(st);
+               return NULL;
+       }
 
-       if (*type == OBJ_BLOB)
+       if (oi.whence == OI_LOOSE)
+               st->open = open_istream_loose;
+       else if (oi.whence == OI_PACKED && !oi.u.packed.is_delta &&
+                repo_settings_get_big_file_threshold(the_repository) < objsize) {
+               st->u.in_pack.pack = oi.u.packed.pack;
+               st->u.in_pack.pos = oi.u.packed.offset;
+               st->open = open_istream_pack_non_delta;
+       } else {
+               st->open = open_istream_incore;
+       }
+
+       if (*type == OBJ_BLOB && objsize <= BUP_CHUNK_THRESHOLD)
                st->open = open_istream_incore;
 
        if (st->open(st, r, real, type)) {
-	       if (open_istream_incore(st, r, real, type)) {
-		       free(st);
-		       return NULL;
-	       }
-	}
+               if (open_istream_incore(st, r, real, type)) {
+                       free(st);
+                       return NULL;
+               }
+       }
 	if (filter) {
 		/* Add "&& !is_null_stream_filter(filter)" for performance */
 		struct git_istream *nst = attach_stream_filter(st, filter);
