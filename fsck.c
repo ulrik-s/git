@@ -1191,7 +1191,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 					".gitattributes too large to parse");
         }
 
-       if (bup_chunking_enabled() && buf &&
+       if (buf &&
            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
                const char *p = buf + BUP_HEADER_LEN;
                struct object_id expect, coid, real;

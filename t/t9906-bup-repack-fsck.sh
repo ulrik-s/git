@@ -40,7 +40,8 @@ test_expect_success 'chunks exist before repack' '
        (
                cd "$TEST_REPO" &&
                oid=$(git rev-parse HEAD:file) &&
-               git -c bup.chunking=false cat-file -p "$oid" | tail -n +3 >../chunks &&
+               path=$(test_oid_to_path $oid) &&
+               test-tool zlib inflate <.git/objects/$path | tail -n +3 >../chunks &&
                cat ../chunks &&
                git count-objects -v >../count && cat ../count &&
                while read c; do
@@ -57,9 +58,6 @@ test_expect_success 'repack keeps chunk objects' '
                git repack -ad &&
                git fsck --no-progress >../fsck.out &&
                cat ../fsck.out &&
-               oid=$(git rev-parse HEAD:file) &&
-               git -c bup.chunking=false cat-file -p "$oid" | tail -n +3 >../chunks &&
-               cat ../chunks &&
                while read c; do
                        git cat-file -p "$c" >/dev/null || return 1
                done <../chunks
@@ -73,10 +71,11 @@ test_expect_success 'fsck reports missing chunk' '
 	setup_repo &&
 	(
 		cd "$TEST_REPO" &&
-		oid=$(git rev-parse HEAD:file) &&
-               git -c bup.chunking=false cat-file -p "$oid" | tail -n +3 >../chunks &&
-		first=$(head -n1 ../chunks) &&
-		path=$(test_oid_to_path $first) &&
+               oid=$(git rev-parse HEAD:file) &&
+               path=$(test_oid_to_path $oid) &&
+               test-tool zlib inflate <.git/objects/$path | tail -n +3 >../chunks &&
+               first=$(head -n1 ../chunks) &&
+               path=$(test_oid_to_path $first) &&
 		rm -f .git/objects/$path &&
 		test_must_fail git -c bup.chunking=true fsck >../err &&
 		grep "missing blob" ../err

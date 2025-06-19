@@ -90,7 +90,7 @@ static void process_blob(struct traversal_context *ctx,
 		obj->flags |= SEEN;
         if (r & LOFR_DO_SHOW) {
                 show_object(ctx, obj, path->buf);
-                if (ctx->revs->repo && bup_chunking_enabled()) {
+               if (ctx->revs->repo) {
                         enum object_type type;
                         unsigned long size;
                        void *buf = repo_read_raw_object_file(ctx->revs->repo,

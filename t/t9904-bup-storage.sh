@@ -36,7 +36,8 @@ test_expect_success 'random 10-byte modifications committed 100 times' '
 	git add file &&
 	git commit -m "update $i" &&
 	oid=$(git rev-parse HEAD:file) &&
-       GIT_BUP_CHUNKING= git cat-file -p "$oid" | tail -n +3 >../chunks &&
+       path=$(test_oid_to_path $oid) &&
+       test-tool zlib inflate <.git/objects/$path | tail -n +3 >../chunks &&
 	uniq=0 && reuse=0 &&
 	while read c
 	do
