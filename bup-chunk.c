@@ -119,7 +119,7 @@ int bup_is_chunk_list(const char *buf, unsigned long len, int hexsz)
 {
        unsigned long off = 0, i;
 
-       if (len < BUP_HEADER_LEN + hexsz + 1)
+       if (len < (unsigned long)(BUP_HEADER_LEN + hexsz + 1))
                return 0;
        if (strncmp(buf, BUP_HEADER, BUP_HEADER_LEN))
                return 0;
@@ -154,7 +154,7 @@ int bup_dechunk_blob(struct repository *r, const char *buf, unsigned long len,
        int hexsz = r->hash_algo->hexsz;
        unsigned long off = 0;
 
-       if (len < BUP_HEADER_LEN + hexsz + 1)
+       if (len < (unsigned long)(BUP_HEADER_LEN + hexsz + 1))
                return -1;
        if (strncmp(buf, BUP_HEADER, BUP_HEADER_LEN))
                return -1;

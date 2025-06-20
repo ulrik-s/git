@@ -1193,7 +1193,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 
        if (buf &&
            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
-               const char *p = buf + BUP_HEADER_LEN;
+               const char *p = (const char *)buf + BUP_HEADER_LEN;
                struct object_id expect, coid, real;
                unsigned hexsz = the_repository->hash_algo->hexsz;
                struct strbuf out = STRBUF_INIT;
