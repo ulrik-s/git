@@ -885,7 +885,7 @@ void *repo_read_object_file(struct repository *r,
                        return NULL;
                }
                p += r->hash_algo->hexsz;
-               if (p - (const char *)data < *size && *p == '\n')
+               if ((size_t)(p - (const char *)data) < *size && *p == '\n')
                        p++;
 
                if (bup_dechunk_blob(r, data, *size, &out)) {

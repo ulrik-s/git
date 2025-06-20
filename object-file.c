@@ -1640,7 +1640,8 @@ int read_loose_object(const char *path,
                                              the_repository->hash_algo))
                                goto out_inflate;
                        p += the_repository->hash_algo->hexsz;
-                       if (p - (const char *)*contents < *size && *p == '\n')
+                       if ((size_t)(p - (const char *)*contents) < *size &&
+                           *p == '\n')
                                p++;
 
                        if (bup_dechunk_blob(the_repository, *contents, *size,
