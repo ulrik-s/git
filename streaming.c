@@ -417,8 +417,11 @@ static int open_istream_incore(struct git_istream *st, struct repository *r,
                if (get_oid_hex_algop(p, &expect, r->hash_algo))
                        return -1;
                p += r->hash_algo->hexsz;
-               if (p - st->u.incore.buf < st->size && *p == '\n')
-                       p++;
+               {
+                       size_t off = p - st->u.incore.buf;
+                       if (off < st->size && *p == '\n')
+                               p++;
+               }
 
                if (bup_dechunk_blob(r, st->u.incore.buf, st->size, &out)) {
                        strbuf_release(&out);
