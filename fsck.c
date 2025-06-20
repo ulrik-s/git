@@ -1194,6 +1194,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
        if (buf &&
            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
                const char *p = (const char *)buf + BUP_HEADER_LEN;
+               size_t off = p - (const char *)buf;
                struct object_id expect, coid, real;
                unsigned hexsz = the_repository->hash_algo->hexsz;
                struct strbuf out = STRBUF_INIT;
@@ -1201,7 +1202,8 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
                if (get_oid_hex_algop(p, &expect, the_repository->hash_algo))
                        goto skip_hash;
                p += hexsz;
-               if (p - buf < size && *p == '\n') { p++; }
+               off += hexsz;
+               if (off < size && *p == '\n') { p++; off++; }
 
                if (bup_dechunk_blob(the_repository, buf, size, &out)) {
                        strbuf_release(&out);
@@ -1216,8 +1218,8 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
                strbuf_release(&out);
 
 skip_hash:
-               while (p - buf < size) {
-                       if ((p - buf) + hexsz > size)
+               while (off < size) {
+                       if (off + hexsz > size)
                                break;
                        if (get_oid_hex_algop(p, &coid, the_repository->hash_algo))
                                break;
@@ -1227,8 +1229,8 @@ skip_hash:
                                              "missing chunk %s",
                                              oid_to_hex(&coid));
                        p += hexsz;
-                       if (p - buf < size && *p == '\n')
-                               p++;
+                       off += hexsz;
+                       if (off < size && *p == '\n') { p++; off++; }
                }
        }
 
