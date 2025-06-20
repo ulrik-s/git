@@ -877,7 +877,7 @@ void *repo_read_object_file(struct repository *r,
        if (type && *type == OBJ_BLOB &&
            bup_is_chunk_list(data, *size, r->hash_algo->hexsz)) {
                struct strbuf out = STRBUF_INIT;
-               const char *p = data + BUP_HEADER_LEN;
+               const char *p = (const char *)data + BUP_HEADER_LEN;
                struct object_id expect, real;
 
                if (get_oid_hex_algop(p, &expect, r->hash_algo)) {

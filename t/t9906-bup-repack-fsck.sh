@@ -43,6 +43,7 @@ test_expect_success 'chunks exist before repack' '
                path=$(test_oid_to_path $oid) &&
                test-tool zlib inflate <.git/objects/$path | tail -n +3 >../chunks &&
                cat ../chunks &&
+               wc -l <../chunks >../chunk_count && echo chunks: $(cat ../chunk_count) &&
                git count-objects -v >../count && cat ../count &&
                while read c; do
                        git cat-file -p "$c" >/dev/null || return 1
@@ -56,6 +57,8 @@ test_expect_success 'repack keeps chunk objects' '
        (
                cd "$TEST_REPO" &&
                git repack -ad &&
+               git count-objects -v >../after_count && cat ../after_count &&
+               ls -l .git/objects/pack >../packs && cat ../packs &&
                git fsck --no-progress >../fsck.out &&
                cat ../fsck.out &&
                while read c; do
