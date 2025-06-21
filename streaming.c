@@ -484,7 +484,9 @@ struct git_istream *open_istream(struct repository *r,
                return NULL;
        }
 
-       if (oi.whence == OI_PACKED && !oi.u.packed.is_delta) {
+       if (*type == OBJ_BLOB && bup_chunking_enabled()) {
+               st->open = open_istream_incore;
+       } else if (oi.whence == OI_PACKED && !oi.u.packed.is_delta) {
                st->u.in_pack.pack = oi.u.packed.pack;
                st->u.in_pack.pos = oi.u.packed.offset;
                if (*type == OBJ_BLOB && objsize <= BUP_CHUNK_THRESHOLD)
