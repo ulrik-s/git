@@ -484,19 +484,18 @@ struct git_istream *open_istream(struct repository *r,
                return NULL;
        }
 
-       if (oi.whence == OI_LOOSE)
-               st->open = open_istream_loose;
-       else if (oi.whence == OI_PACKED && !oi.u.packed.is_delta &&
-                repo_settings_get_big_file_threshold(the_repository) < objsize) {
+       if (oi.whence == OI_PACKED && !oi.u.packed.is_delta) {
                st->u.in_pack.pack = oi.u.packed.pack;
                st->u.in_pack.pos = oi.u.packed.offset;
-               st->open = open_istream_pack_non_delta;
+               if (*type == OBJ_BLOB && objsize <= BUP_CHUNK_THRESHOLD)
+                       st->open = open_istream_incore;
+               else
+                       st->open = open_istream_pack_non_delta;
+       } else if (oi.whence == OI_LOOSE) {
+               st->open = open_istream_loose;
        } else {
                st->open = open_istream_incore;
        }
-
-       if (*type == OBJ_BLOB && objsize <= BUP_CHUNK_THRESHOLD)
-               st->open = open_istream_incore;
 
        if (st->open(st, r, real, type)) {
                if (open_istream_incore(st, r, real, type)) {

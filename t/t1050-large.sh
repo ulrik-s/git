@@ -13,8 +13,9 @@ test_expect_success 'core.bigFileThreshold must be non-negative' '
 '
 
 test_expect_success setup '
-	# clone does not allow us to pass core.bigfilethreshold to
-	# new repos, so set core.bigfilethreshold globally
+       unset GIT_TEST_OE_SIZE GIT_TEST_OE_DELTA_SIZE &&
+       # clone does not allow us to pass core.bigfilethreshold to
+       # new repos, so set core.bigfilethreshold globally
 	git config --global core.bigfilethreshold 200k &&
 	printf "%2000000s" X >large1 &&
 	cp large1 large2 &&

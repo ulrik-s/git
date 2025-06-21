@@ -34,6 +34,7 @@
 #include "object-file.h"
 #include "object-store.h"
 #include "replace-object.h"
+#include "bup-chunk.h"
 #include "dir.h"
 #include "midx.h"
 #include "trace2.h"
@@ -498,13 +499,13 @@ static unsigned long write_no_reuse_object(struct hashfile *f, struct object_ent
 	struct git_istream *st = NULL;
 	const unsigned hashsz = the_hash_algo->rawsz;
 
-	if (!usable_delta) {
-		if (oe_type(entry) == OBJ_BLOB &&
-		    oe_size_greater_than(&to_pack, entry,
-					 repo_settings_get_big_file_threshold(the_repository)) &&
-		    (st = open_istream(the_repository, &entry->idx.oid, &type,
-				       &size, NULL)) != NULL)
-			buf = NULL;
+       if (!usable_delta) {
+               if (oe_type(entry) == OBJ_BLOB &&
+                   oe_size_greater_than(&to_pack, entry,
+                                        BUP_CHUNK_THRESHOLD) &&
+                   (st = open_istream(the_repository, &entry->idx.oid, &type,
+                                      &size, NULL)) != NULL)
+                       buf = NULL;
 		else {
                        buf = repo_read_raw_object_file(the_repository,
                                                    &entry->idx.oid, &type,
