@@ -51,10 +51,16 @@
 	(ERROR) A tree has an invalid format.
 
 `badType`::
-	(ERROR) Found an invalid object type.
+        (ERROR) Found an invalid object type.
+
+`chunkMissing`::
+        (ERROR) Blob references a missing chunk object.
+
+`chunkHashMismatch`::
+        (ERROR) Dechunked blob hash does not match value stored in chunk list.
 
 `duplicateEntries`::
-	(ERROR) A tree contains duplicate file entries.
+        (ERROR) A tree contains duplicate file entries.
 
 `emptyName`::
 	(WARN) A path contains an empty name.
@@ -69,10 +75,10 @@
 	(IGNORE) Extra headers found after `tagger`.
 
 `fullPathname`::
-	(WARN) A path contains the full path starting with "/".
+        (WARN) A path contains the full path starting with "/".
 
 `gitattributesBlob`::
-	(ERROR) A non-blob found at `.gitattributes`.
+        (ERROR) A non-blob found at `.gitattributes`.
 
 `gitattributesLarge`::
 	(ERROR) The `.gitattributes` blob is too large.
@@ -84,7 +90,7 @@
 	(ERROR) Unable to read `.gitattributes` blob.
 
 `gitattributesSymlink`::
-	(INFO) `.gitattributes` is a symlink.
+        (INFO) `.gitattributes` is a symlink.
 
 `gitignoreSymlink`::
 	(INFO) `.gitignore` is a symlink.
@@ -102,10 +108,7 @@
 	(ERROR) A submodule name is invalid.
 
 `gitmodulesParse`::
-	(INFO) Could not parse `.gitmodules` blob.
-
-`gitmodulesLarge`;
-	(ERROR) `.gitmodules` blob is too large to parse.
+        (INFO) Could not parse `.gitmodules` blob.
 
 `gitmodulesPath`::
 	(ERROR) `.gitmodules` path is invalid.

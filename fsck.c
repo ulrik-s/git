@@ -16,6 +16,8 @@
 #include "tag.h"
 #include "fsck.h"
 #include "refs.h"
+#include "bup-chunk.h"
+#include "object-file.h"
 #include "url.h"
 #include "utf8.h"
 #include "oidset.h"
@@ -1173,7 +1175,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 		ret |= data.ret;
 	}
 
-	if (oidset_contains(&options->gitattributes_found, oid)) {
+        if (oidset_contains(&options->gitattributes_found, oid)) {
 		const char *ptr;
 
 		oidset_insert(&options->gitattributes_done, oid);
@@ -1187,7 +1189,50 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 			return report(options, oid, OBJ_BLOB,
 					FSCK_MSG_GITATTRIBUTES_LARGE,
 					".gitattributes too large to parse");
-		}
+        }
+
+       if (buf &&
+           bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
+               const char *p = (const char *)buf + BUP_HEADER_LEN;
+               size_t off = p - (const char *)buf;
+               struct object_id expect, coid, real;
+               unsigned hexsz = the_repository->hash_algo->hexsz;
+               struct strbuf out = STRBUF_INIT;
+
+               if (get_oid_hex_algop(p, &expect, the_repository->hash_algo))
+                       goto skip_hash;
+               p += hexsz;
+               off += hexsz;
+               if (off < size && *p == '\n') { p++; off++; }
+
+               if (bup_dechunk_blob(the_repository, buf, size, &out)) {
+                       strbuf_release(&out);
+                       goto skip_hash;
+               }
+               hash_object_file(the_repository->hash_algo, out.buf, out.len,
+                                OBJ_BLOB, &real);
+               if (!oideq(&real, &expect))
+                       ret |= report(options, oid, OBJ_BLOB,
+                                     FSCK_MSG_CHUNK_HASH_MISMATCH,
+                                     "chunk hash mismatch");
+               strbuf_release(&out);
+
+skip_hash:
+               while (off < size) {
+                       if (off + hexsz > size)
+                               break;
+                       if (get_oid_hex_algop(p, &coid, the_repository->hash_algo))
+                               break;
+                       if (!has_object(the_repository, &coid, 0))
+                               ret |= report(options, oid, OBJ_BLOB,
+                                             FSCK_MSG_CHUNK_MISSING,
+                                             "missing chunk %s",
+                                             oid_to_hex(&coid));
+                       p += hexsz;
+                       off += hexsz;
+                       if (off < size && *p == '\n') { p++; off++; }
+               }
+       }
 
 		for (ptr = buf; *ptr; ) {
 			const char *eol = strchrnul(ptr, '\n');
@@ -1293,7 +1338,7 @@ static int fsck_blobs(struct oidset *blobs_found, struct oidset *blobs_done,
 		if (oidset_contains(blobs_done, oid))
 			continue;
 
-		buf = repo_read_object_file(the_repository, oid, &type, &size);
+               buf = repo_read_raw_object_file(the_repository, oid, &type, &size);
 		if (!buf) {
 			if (is_promisor_object(the_repository, oid))
 				continue;

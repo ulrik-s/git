@@ -1629,19 +1629,43 @@ int read_loose_object(const char *path,
 	       if (!oideq(expected_oid, real_oid))
 		       goto out_inflate;
 
-	       if (*oi->typep == OBJ_BLOB && bup_chunking_enabled() &&
-		   bup_is_chunk_list(*contents, *size,
-				    the_repository->hash_algo->hexsz)) {
-		       struct strbuf out = STRBUF_INIT;
-		       if (bup_dechunk_blob(the_repository, *contents, *size,
-					   &out)) {
-			       strbuf_release(&out);
-			       goto out_inflate;
-		       }
-		       free(*contents);
-		       *contents = strbuf_detach(&out, size);
-	       }
-	}
+               if (*oi->typep == OBJ_BLOB &&
+                   bup_is_chunk_list(*contents, *size,
+                                    the_repository->hash_algo->hexsz)) {
+                       struct strbuf out = STRBUF_INIT;
+                       const char *p = (const char *)*contents + BUP_HEADER_LEN;
+                       struct object_id expect, real;
+
+                       if (get_oid_hex_algop(p, &expect,
+                                             the_repository->hash_algo))
+                               goto out_inflate;
+                       p += the_repository->hash_algo->hexsz;
+                       if ((size_t)(p - (const char *)*contents) < *size &&
+                           *p == '\n')
+                               p++;
+
+                       if (bup_dechunk_blob(the_repository, *contents, *size,
+                                           &out)) {
+                               strbuf_release(&out);
+                               goto out_inflate;
+                       }
+
+                       hash_object_file(the_repository->hash_algo, out.buf,
+                                        out.len, OBJ_BLOB, &real);
+                       if (!oideq(&real, &expect)) {
+                               strbuf_release(&out);
+                               goto out_inflate;
+                       }
+
+                       free(*contents);
+                       {
+                               size_t new_size;
+                               *contents = strbuf_detach(&out, &new_size);
+                               if (size)
+                                       *size = new_size;
+                       }
+               }
+       }
 
 	ret = 0; /* everything checks out */
 
