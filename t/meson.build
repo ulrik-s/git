@@ -1104,6 +1104,7 @@ integration_tests = [
   't9908-bup-gc-pack.sh',
   't9909-bup-chunk-stats.sh',
   't9910-bup-random-edits.sh',
+  't9911-bup-growth.sh',
 ]
 
 benchmarks = [
