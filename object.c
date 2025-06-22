@@ -346,18 +346,19 @@ struct object *parse_object_with_flags(struct repository *r,
                        return NULL;
                }
 
-               if (type == OBJ_BLOB &&
-                   bup_is_chunk_list(buffer, size, r->hash_algo->hexsz)) {
+               {
                        struct strbuf out = STRBUF_INIT;
-
-                       if (bup_dechunk_and_verify(r, buffer, size, &out)) {
+                       int dechunked = bup_maybe_dechunk(r, type, buffer, size,
+                                                         &out);
+                       if (dechunked < 0) {
                                strbuf_release(&out);
                                free(buffer);
                                return NULL;
+                       } else if (dechunked > 0) {
+                               free(buffer);
+                               size = out.len;
+                               buffer = strbuf_detach(&out, NULL);
                        }
-                       free(buffer);
-                       size = out.len;
-                       buffer = strbuf_detach(&out, NULL);
                }
 
 		obj = parse_object_buffer(r, oid, type, size,

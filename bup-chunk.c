@@ -252,3 +252,15 @@ int bup_for_each_chunk(struct repository *r, const char *buf, unsigned long len,
        }
        return 0;
 }
+int bup_maybe_dechunk(struct repository *r, enum object_type type,
+                      const char *buf, unsigned long len,
+                      struct strbuf *out)
+{
+    if (type != OBJ_BLOB)
+        return 0;
+    if (!bup_is_chunk_list(buf, len, r->hash_algo->hexsz))
+        return 0;
+    if (bup_dechunk_and_verify(r, buf, len, out))
+        return -1;
+    return 1;
+}

@@ -874,19 +874,19 @@ void *repo_read_object_file(struct repository *r,
        oi.contentp = &data;
        if (oid_object_info_extended(r, oid, &oi, flags))
 	       return NULL;
-       if (type && *type == OBJ_BLOB &&
-           bup_is_chunk_list(data, *size, r->hash_algo->hexsz)) {
+       if (type) {
                struct strbuf out = STRBUF_INIT;
+               int dechunked = bup_maybe_dechunk(r, *type, data, *size, &out);
 
-               if (bup_dechunk_and_verify(r, data, *size, &out)) {
+               if (dechunked < 0) {
                        strbuf_release(&out);
                        free(data);
                        return NULL;
+               } else if (dechunked > 0) {
+                       free(data);
+                       *size = out.len;
+                       data = strbuf_detach(&out, NULL);
                }
-
-               free(data);
-               *size = out.len;
-               data = strbuf_detach(&out, NULL);
        }
 
        return data;

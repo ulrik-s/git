@@ -408,18 +408,16 @@ static int open_istream_incore(struct git_istream *st, struct repository *r,
        if (oid_object_info_extended(r, oid, &oi, OBJECT_INFO_DIE_IF_CORRUPT))
                return -1;
 
-       if (*type == OBJ_BLOB &&
-           bup_is_chunk_list(st->u.incore.buf, st->size, r->hash_algo->hexsz)) {
+       {
                struct strbuf out = STRBUF_INIT;
-
-               if (bup_dechunk_and_verify(r, st->u.incore.buf, st->size, &out)) {
+               int dechunked = bup_maybe_dechunk(r, *type, st->u.incore.buf,
+                                                 st->size, &out);
+               if (dechunked < 0) {
                        strbuf_release(&out);
                        return -1;
-               }
-
-               free(st->u.incore.buf);
-               {
+               } else if (dechunked > 0) {
                        size_t new_size;
+                       free(st->u.incore.buf);
                        st->u.incore.buf = strbuf_detach(&out, &new_size);
                        st->size = new_size;
                }

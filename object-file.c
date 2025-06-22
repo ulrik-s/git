@@ -1624,20 +1624,19 @@ int read_loose_object(const char *path,
 	       if (!oideq(expected_oid, real_oid))
 		       goto out_inflate;
 
-               if (*oi->typep == OBJ_BLOB &&
-                   bup_is_chunk_list(*contents, *size,
-                                    the_repository->hash_algo->hexsz)) {
+               {
                        struct strbuf out = STRBUF_INIT;
-
-                       if (bup_dechunk_and_verify(the_repository, *contents,
-                                                 *size, &out)) {
+                       int dechunked = bup_maybe_dechunk(the_repository,
+                                                         *oi->typep,
+                                                         *contents,
+                                                         *size,
+                                                         &out);
+                       if (dechunked < 0) {
                                strbuf_release(&out);
                                goto out_inflate;
-                       }
-
-                       free(*contents);
-                       {
+                       } else if (dechunked > 0) {
                                size_t new_size;
+                               free(*contents);
                                *contents = strbuf_detach(&out, &new_size);
                                if (size)
                                        *size = new_size;

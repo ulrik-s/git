@@ -20,13 +20,31 @@
 #include "environment.h"
 
 struct traversal_context {
-	struct rev_info *revs;
-	show_object_fn show_object;
-	show_commit_fn show_commit;
-	void *show_data;
-	struct filter *filter;
-	int depth;
+        struct rev_info *revs;
+        show_object_fn show_object;
+        show_commit_fn show_commit;
+        void *show_data;
+        struct filter *filter;
+        int depth;
 };
+
+static void show_object(struct traversal_context *ctx,
+                        struct object *object,
+                        const char *name);
+
+struct for_each_chunk_data {
+       struct traversal_context *ctx;
+       const char *path;
+};
+
+static int show_chunk_cb(const struct object_id *oid, void *data)
+{
+       struct for_each_chunk_data *d = data;
+       show_object(d->ctx,
+                   (struct object *)lookup_blob(d->ctx->revs->repo, oid),
+                   d->path);
+       return 0;
+}
 
 static void show_commit(struct traversal_context *ctx,
 			struct commit *commit)
@@ -92,32 +110,18 @@ static void process_blob(struct traversal_context *ctx,
                show_object(ctx, obj, path->buf);
                if (ctx->revs->repo && bup_chunking_enabled()) {
                        enum object_type type;
-                       unsigned long size, list_len;
-                       const char *list;
+                       unsigned long size;
                        void *buf = repo_read_raw_object_file(ctx->revs->repo,
                                                           &blob->object.oid,
                                                           &type, &size);
-                       if (buf && type == OBJ_BLOB &&
-                           !bup_parse_chunk_header(ctx->revs->repo, buf, size,
-                                                  NULL, &list, &list_len)) {
-                               while (list_len >= ctx->revs->repo->hash_algo->hexsz) {
-                                       struct object_id coid;
-                                       if (get_oid_hex_algop(list, &coid,
-                                                            ctx->revs->repo->hash_algo))
-                                               break;
-                                       show_object(ctx,
-                                                   (struct object *)lookup_blob(ctx->revs->repo,
-                                                                               &coid),
-                                                   path->buf);
-                                       list += ctx->revs->repo->hash_algo->hexsz;
-                                       list_len -= ctx->revs->repo->hash_algo->hexsz;
-                                       if (list_len && *list == '\n') {
-                                               list++; list_len--; }
-                               }
+                       if (buf && type == OBJ_BLOB) {
+                               struct for_each_chunk_data d = { ctx, path->buf };
+                               bup_for_each_chunk(ctx->revs->repo, buf, size,
+                                                  show_chunk_cb, &d);
                        }
                        free(buf);
                }
-        }
+       }
 	strbuf_setlen(path, pathlen);
 }
 

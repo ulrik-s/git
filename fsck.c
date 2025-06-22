@@ -28,6 +28,27 @@
 
 static ssize_t max_tree_entry_len = 4096;
 
+static int report(struct fsck_options *options,
+                  const struct object_id *oid,
+                  enum object_type object_type,
+                  enum fsck_msg_id msg_id, const char *fmt, ...);
+
+struct missing_chunk_data {
+       struct fsck_options *opts;
+       const struct object_id *parent;
+       int *retp;
+};
+
+static int check_chunk(const struct object_id *coid, void *vdata)
+{
+       struct missing_chunk_data *d = vdata;
+       if (!has_object(the_repository, coid, 0))
+               *d->retp |= report(d->opts, d->parent, OBJ_BLOB,
+                                 FSCK_MSG_CHUNK_MISSING,
+                                 "missing chunk %s", oid_to_hex(coid));
+       return 0;
+}
+
 #define STR(x) #x
 #define MSG_ID(id, msg_type) { STR(id), NULL, NULL, FSCK_##msg_type },
 static struct {
@@ -1193,14 +1214,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 
        if (buf &&
            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
-               struct object_id expect, coid;
-               const char *list;
-               unsigned long list_len;
                struct strbuf out = STRBUF_INIT;
-
-               if (bup_parse_chunk_header(the_repository, buf, size, &expect,
-                                         &list, &list_len))
-                       goto skip_hash;
 
                if (bup_dechunk_and_verify(the_repository, buf, size, &out))
                        ret |= report(options, oid, OBJ_BLOB,
@@ -1208,23 +1222,8 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
                                      "chunk hash mismatch");
                strbuf_release(&out);
 
-skip_hash:
-               while (list_len) {
-                       if (list_len < the_repository->hash_algo->hexsz)
-                               break;
-                       if (get_oid_hex_algop(list, &coid,
-                                            the_repository->hash_algo))
-                               break;
-                       if (!has_object(the_repository, &coid, 0))
-                               ret |= report(options, oid, OBJ_BLOB,
-                                             FSCK_MSG_CHUNK_MISSING,
-                                             "missing chunk %s",
-                                             oid_to_hex(&coid));
-                       list += the_repository->hash_algo->hexsz;
-                       list_len -= the_repository->hash_algo->hexsz;
-                       if (list_len && *list == '\n') {
-                               list++; list_len--; }
-               }
+               struct missing_chunk_data mcd = { options, oid, &ret };
+               bup_for_each_chunk(the_repository, buf, size, check_chunk, &mcd);
        }
 
 		for (ptr = buf; *ptr; ) {
