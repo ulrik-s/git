@@ -237,7 +237,7 @@ int bup_for_each_chunk(struct repository *r, const char *buf, unsigned long len,
        if (bup_parse_chunk_header(r, buf, len, &dummy, &p, &remain))
                return -1;
        while (remain) {
-               if (remain < hexsz)
+               if (remain < (unsigned long)hexsz)
                        return -1;
                if (get_oid_hex_algop(p, &oid, r->hash_algo))
                        return -1;
