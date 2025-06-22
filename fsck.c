@@ -1215,6 +1215,7 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
        if (buf &&
            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
                struct strbuf out = STRBUF_INIT;
+		struct missing_chunk_data mcd = { options, oid, &ret };
 
                if (bup_dechunk_and_verify(the_repository, buf, size, &out))
                        ret |= report(options, oid, OBJ_BLOB,
@@ -1222,7 +1223,6 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
                                      "chunk hash mismatch");
                strbuf_release(&out);
 
-               struct missing_chunk_data mcd = { options, oid, &ret };
                bup_for_each_chunk(the_repository, buf, size, check_chunk, &mcd);
        }
 

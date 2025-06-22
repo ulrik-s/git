@@ -1107,6 +1107,7 @@ integration_tests = [
   't9911-bup-growth.sh',
   't9912-bup-chunk-savings.sh',
   't9913-bup-small-edits.sh',
+  't9914-bup-block-random.sh',
 ]
 
 benchmarks = [
