@@ -349,7 +349,8 @@ struct object *parse_object_with_flags(struct repository *r,
                if (type == OBJ_BLOB &&
                    bup_is_chunk_list(buffer, size, r->hash_algo->hexsz)) {
                        struct strbuf out = STRBUF_INIT;
-                       if (bup_dechunk_blob(r, buffer, size, &out)) {
+
+                       if (bup_dechunk_and_verify(r, buffer, size, &out)) {
                                strbuf_release(&out);
                                free(buffer);
                                return NULL;

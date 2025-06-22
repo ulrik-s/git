@@ -92,36 +92,31 @@ static void process_blob(struct traversal_context *ctx,
                show_object(ctx, obj, path->buf);
                if (ctx->revs->repo && bup_chunking_enabled()) {
                        enum object_type type;
-                       unsigned long size;
+                       unsigned long size, list_len;
+                       const char *list;
                        void *buf = repo_read_raw_object_file(ctx->revs->repo,
                                                           &blob->object.oid,
                                                           &type, &size);
-                        if (buf && type == OBJ_BLOB &&
-                            bup_is_chunk_list(buf, size,
-                                             ctx->revs->repo->hash_algo->hexsz)) {
-                               const char *p = (const char *)buf + BUP_HEADER_LEN;
-                                struct object_id coid;
-                                unsigned hexsz = ctx->revs->repo->hash_algo->hexsz;
-
-                                p += hexsz + 1;
-                                size -= BUP_HEADER_LEN + hexsz + 1;
-
-                                while (size >= hexsz) {
-                                        if (get_oid_hex_algop(p, &coid,
-                                                              ctx->revs->repo->hash_algo))
-                                                break;
-                                        show_object(ctx,
-                                                    (struct object *)lookup_blob(ctx->revs->repo,
-                                                                                &coid),
-                                                    path->buf);
-                                        p += hexsz;
-                                        size -= hexsz;
-                                        if (size && *p == '\n') {
-                                                p++; size--; }
-                                }
-                        }
-                        free(buf);
-                }
+                       if (buf && type == OBJ_BLOB &&
+                           !bup_parse_chunk_header(ctx->revs->repo, buf, size,
+                                                  NULL, &list, &list_len)) {
+                               while (list_len >= ctx->revs->repo->hash_algo->hexsz) {
+                                       struct object_id coid;
+                                       if (get_oid_hex_algop(list, &coid,
+                                                            ctx->revs->repo->hash_algo))
+                                               break;
+                                       show_object(ctx,
+                                                   (struct object *)lookup_blob(ctx->revs->repo,
+                                                                               &coid),
+                                                   path->buf);
+                                       list += ctx->revs->repo->hash_algo->hexsz;
+                                       list_len -= ctx->revs->repo->hash_algo->hexsz;
+                                       if (list_len && *list == '\n') {
+                                               list++; list_len--; }
+                               }
+                       }
+                       free(buf);
+               }
         }
 	strbuf_setlen(path, pathlen);
 }

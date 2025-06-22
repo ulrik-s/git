@@ -1628,26 +1628,9 @@ int read_loose_object(const char *path,
                    bup_is_chunk_list(*contents, *size,
                                     the_repository->hash_algo->hexsz)) {
                        struct strbuf out = STRBUF_INIT;
-                       const char *p = (const char *)*contents + BUP_HEADER_LEN;
-                       struct object_id expect, real;
 
-                       if (get_oid_hex_algop(p, &expect,
-                                             the_repository->hash_algo))
-                               goto out_inflate;
-                       p += the_repository->hash_algo->hexsz;
-                       if ((size_t)(p - (const char *)*contents) < *size &&
-                           *p == '\n')
-                               p++;
-
-                       if (bup_dechunk_blob(the_repository, *contents, *size,
-                                           &out)) {
-                               strbuf_release(&out);
-                               goto out_inflate;
-                       }
-
-                       hash_object_file(the_repository->hash_algo, out.buf,
-                                        out.len, OBJ_BLOB, &real);
-                       if (!oideq(&real, &expect)) {
+                       if (bup_dechunk_and_verify(the_repository, *contents,
+                                                 *size, &out)) {
                                strbuf_release(&out);
                                goto out_inflate;
                        }

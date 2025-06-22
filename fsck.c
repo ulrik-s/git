@@ -1193,44 +1193,37 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 
        if (buf &&
            bup_is_chunk_list(buf, size, the_repository->hash_algo->hexsz)) {
-               const char *p = (const char *)buf + BUP_HEADER_LEN;
-               size_t off = p - (const char *)buf;
-               struct object_id expect, coid, real;
-               unsigned hexsz = the_repository->hash_algo->hexsz;
+               struct object_id expect, coid;
+               const char *list;
+               unsigned long list_len;
                struct strbuf out = STRBUF_INIT;
 
-               if (get_oid_hex_algop(p, &expect, the_repository->hash_algo))
+               if (bup_parse_chunk_header(the_repository, buf, size, &expect,
+                                         &list, &list_len))
                        goto skip_hash;
-               p += hexsz;
-               off += hexsz;
-               if (off < size && *p == '\n') { p++; off++; }
 
-               if (bup_dechunk_blob(the_repository, buf, size, &out)) {
-                       strbuf_release(&out);
-                       goto skip_hash;
-               }
-               hash_object_file(the_repository->hash_algo, out.buf, out.len,
-                                OBJ_BLOB, &real);
-               if (!oideq(&real, &expect))
+               if (bup_dechunk_and_verify(the_repository, buf, size, &out))
                        ret |= report(options, oid, OBJ_BLOB,
                                      FSCK_MSG_CHUNK_HASH_MISMATCH,
                                      "chunk hash mismatch");
                strbuf_release(&out);
 
 skip_hash:
-               while (off < size) {
-                       if (off + hexsz > size)
+               while (list_len) {
+                       if (list_len < the_repository->hash_algo->hexsz)
                                break;
-                       if (get_oid_hex_algop(p, &coid, the_repository->hash_algo))
+                       if (get_oid_hex_algop(list, &coid,
+                                            the_repository->hash_algo))
                                break;
                        if (!has_object(the_repository, &coid, 0))
                                ret |= report(options, oid, OBJ_BLOB,
                                              FSCK_MSG_CHUNK_MISSING,
                                              "missing chunk %s",
                                              oid_to_hex(&coid));
-                       p += hexsz;
-                       off += hexsz;
-                       if (off < size && *p == '\n') { p++; off++; }
+                       list += the_repository->hash_algo->hexsz;
+                       list_len -= the_repository->hash_algo->hexsz;
+                       if (list_len && *list == '\n') {
+                               list++; list_len--; }
                }
        }
 
