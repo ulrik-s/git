@@ -21,6 +21,7 @@
 #include "loose.h"
 #include "object-file-convert.h"
 #include "object-file.h"
+#include "blob-tree.h"
 #include "object-store.h"
 #include "oidtree.h"
 #include "pack.h"
@@ -1281,21 +1282,18 @@ int index_fd(struct index_state *istate, struct object_id *oid,
 }
 
 int index_path(struct index_state *istate, struct object_id *oid,
-	       const char *path, struct stat *st, unsigned flags)
+               const char *path, struct stat *st, unsigned flags)
 {
-	int fd;
-	struct strbuf sb = STRBUF_INIT;
-	int rc = 0;
+       struct strbuf sb = STRBUF_INIT;
+       int rc = 0;
 
 	switch (st->st_mode & S_IFMT) {
-	case S_IFREG:
-		fd = open(path, O_RDONLY);
-		if (fd < 0)
-			return error_errno("open(\"%s\")", path);
-		if (index_fd(istate, oid, fd, st, OBJ_BLOB, path, flags) < 0)
-			return error(_("%s: failed to insert into database"),
-				     path);
-		break;
+       case S_IFREG:
+               rc = write_blob_tree_file(path, oid);
+               if (rc < 0)
+                       return error(_("%s: failed to insert into database"),
+                                    path);
+               break;
 	case S_IFLNK:
 		if (strbuf_readlink(&sb, path, st->st_size))
 			return error_errno("readlink(\"%s\")", path);

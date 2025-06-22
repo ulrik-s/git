@@ -388,8 +388,8 @@ int cmd_add(int argc,
 
 	repo_config(repo, add_config, NULL);
 
-	argc = parse_options(argc, argv, prefix, builtin_add_options,
-			  builtin_add_usage, PARSE_OPT_KEEP_ARGV0);
+       argc = parse_options(argc, argv, prefix, builtin_add_options,
+                         builtin_add_usage, PARSE_OPT_KEEP_ARGV0);
 
 	prepare_repo_settings(repo);
 	repo->settings.command_requires_full_index = 0;

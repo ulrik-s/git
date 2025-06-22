@@ -7,6 +7,7 @@
 #include "replace-object.h"
 #include "object-file.h"
 #include "blob.h"
+#include "blob-tree.h"
 #include "statinfo.h"
 #include "tree.h"
 #include "commit.h"
@@ -31,6 +32,7 @@ static const char *object_type_strings[] = {
 	"tree",		/* OBJ_TREE = 2 */
 	"blob",		/* OBJ_BLOB = 3 */
 	"tag",		/* OBJ_TAG = 4 */
+        "blob-tree",    /* OBJ_BLOB_TREE = 5 */
 };
 
 const char *type_name(unsigned int type)
@@ -196,10 +198,12 @@ struct object *lookup_object_by_type(struct repository *r,
 	switch (type) {
 	case OBJ_COMMIT:
 		return (struct object *)lookup_commit(r, oid);
-	case OBJ_TREE:
-		return (struct object *)lookup_tree(r, oid);
-	case OBJ_TAG:
-		return (struct object *)lookup_tag(r, oid);
+       case OBJ_TREE:
+               return (struct object *)lookup_tree(r, oid);
+       case OBJ_BLOB_TREE:
+               return (struct object *)lookup_blob_tree(r, oid);
+       case OBJ_TAG:
+               return (struct object *)lookup_tag(r, oid);
 	case OBJ_BLOB:
 		return (struct object *)lookup_blob(r, oid);
 	default:
@@ -242,19 +246,31 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id 
 			parse_blob_buffer(blob);
 			obj = &blob->object;
 		}
-	} else if (type == OBJ_TREE) {
-		struct tree *tree = lookup_tree(r, oid);
-		if (tree) {
-			obj = &tree->object;
-			if (!tree->buffer)
-				tree->object.parsed = 0;
-			if (!tree->object.parsed) {
-				if (parse_tree_buffer(tree, buffer, size))
-					return NULL;
-				*eaten_p = 1;
-			}
-		}
-	} else if (type == OBJ_COMMIT) {
+       } else if (type == OBJ_TREE) {
+               struct tree *tree = lookup_tree(r, oid);
+               if (tree) {
+                       obj = &tree->object;
+                       if (!tree->buffer)
+                               tree->object.parsed = 0;
+                       if (!tree->object.parsed) {
+                               if (parse_tree_buffer(tree, buffer, size))
+                                       return NULL;
+                               *eaten_p = 1;
+                       }
+               }
+       } else if (type == OBJ_BLOB_TREE) {
+               struct blob_tree *btree = lookup_blob_tree(r, oid);
+               if (btree) {
+                       obj = &btree->object;
+                       if (!btree->buffer)
+                               btree->object.parsed = 0;
+                       if (!btree->object.parsed) {
+                               if (parse_blob_tree_buffer(btree, buffer, size))
+                                       return NULL;
+                               *eaten_p = 1;
+                       }
+               }
+       } else if (type == OBJ_COMMIT) {
 		struct commit *commit = lookup_commit(r, oid);
 		if (commit) {
 			if (parse_commit_buffer(r, commit, buffer, size, 1))
@@ -329,11 +345,17 @@ struct object *parse_object_with_flags(struct repository *r,
 	 * care about checking the hash, we can simply verify that we
 	 * have the on-disk object with the correct type.
 	 */
-	if (skip_hash && discard_tree &&
-	    (!obj || obj->type == OBJ_TREE) &&
-	    oid_object_info(r, oid, NULL) == OBJ_TREE) {
-		return &lookup_tree(r, oid)->object;
-	}
+       if (skip_hash && discard_tree &&
+           (!obj || obj->type == OBJ_TREE) &&
+           oid_object_info(r, oid, NULL) == OBJ_TREE) {
+               return &lookup_tree(r, oid)->object;
+       }
+
+       if (skip_hash && discard_tree &&
+           (!obj || obj->type == OBJ_BLOB_TREE) &&
+           oid_object_info(r, oid, NULL) == OBJ_BLOB_TREE) {
+               return &lookup_blob_tree(r, oid)->object;
+       }
 
 	buffer = repo_read_object_file(r, oid, &type, &size);
 	if (buffer) {
@@ -348,9 +370,11 @@ struct object *parse_object_with_flags(struct repository *r,
 					  buffer, &eaten);
 		if (!eaten)
 			free(buffer);
-		if (discard_tree && type == OBJ_TREE)
-			free_tree_buffer((struct tree *)obj);
-		return obj;
+               if (discard_tree && type == OBJ_TREE)
+                       free_tree_buffer((struct tree *)obj);
+               else if (discard_tree && type == OBJ_BLOB_TREE)
+                       free_blob_tree_buffer((struct blob_tree *)obj);
+               return obj;
 	}
 	return NULL;
 }
@@ -517,9 +541,10 @@ struct parsed_object_pool *parsed_object_pool_new(struct repository *repo)
 	memset(o, 0, sizeof(*o));
 
 	o->repo = repo;
-	o->blob_state = allocate_alloc_state();
-	o->tree_state = allocate_alloc_state();
-	o->commit_state = allocate_alloc_state();
+       o->blob_state = allocate_alloc_state();
+       o->tree_state = allocate_alloc_state();
+       o->blob_tree_state = allocate_alloc_state();
+       o->commit_state = allocate_alloc_state();
 	o->tag_state = allocate_alloc_state();
 	o->object_state = allocate_alloc_state();
 
@@ -558,10 +583,12 @@ void parsed_object_pool_clear(struct parsed_object_pool *o)
 		if (!obj)
 			continue;
 
-		if (obj->type == OBJ_TREE)
-			free_tree_buffer((struct tree*)obj);
-		else if (obj->type == OBJ_COMMIT)
-			release_commit_memory(o, (struct commit*)obj);
+               if (obj->type == OBJ_TREE)
+                       free_tree_buffer((struct tree*)obj);
+               else if (obj->type == OBJ_BLOB_TREE)
+                       free_blob_tree_buffer((struct blob_tree*)obj);
+               else if (obj->type == OBJ_COMMIT)
+                       release_commit_memory(o, (struct commit*)obj);
 		else if (obj->type == OBJ_TAG)
 			release_tag_memory((struct tag*)obj);
 	}
@@ -573,15 +600,17 @@ void parsed_object_pool_clear(struct parsed_object_pool *o)
 	o->buffer_slab = NULL;
 
 	parsed_object_pool_reset_commit_grafts(o);
-	clear_alloc_state(o->blob_state);
-	clear_alloc_state(o->tree_state);
-	clear_alloc_state(o->commit_state);
+       clear_alloc_state(o->blob_state);
+       clear_alloc_state(o->tree_state);
+       clear_alloc_state(o->blob_tree_state);
+       clear_alloc_state(o->commit_state);
 	clear_alloc_state(o->tag_state);
 	clear_alloc_state(o->object_state);
 	stat_validity_clear(o->shallow_stat);
-	FREE_AND_NULL(o->blob_state);
-	FREE_AND_NULL(o->tree_state);
-	FREE_AND_NULL(o->commit_state);
+       FREE_AND_NULL(o->blob_state);
+       FREE_AND_NULL(o->tree_state);
+       FREE_AND_NULL(o->blob_tree_state);
+       FREE_AND_NULL(o->commit_state);
 	FREE_AND_NULL(o->tag_state);
 	FREE_AND_NULL(o->object_state);
 	FREE_AND_NULL(o->shallow_stat);
