@@ -1,0 +1,21 @@
+name: bup-storage-test
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  bup:
+    runs-on: ubuntu-latest
+    env:
+      CI_JOB_IMAGE: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: ci/install-dependencies.sh
+      - run: make
+      - run: |
+          make test GIT_TEST_OPTS='-v'
+      - run: |
+          GIT_BUP_CHUNKING=1 make test GIT_TEST_OPTS='-v'

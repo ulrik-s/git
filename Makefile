@@ -1084,6 +1084,7 @@ LIB_OBJS += notes-utils.o
 LIB_OBJS += notes.o
 LIB_OBJS += object-file-convert.o
 LIB_OBJS += object-file.o
+LIB_OBJS += bup-chunk.o
 LIB_OBJS += object-name.o
 LIB_OBJS += object-store.o
 LIB_OBJS += object.o

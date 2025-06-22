@@ -28,6 +28,7 @@
 #include "path.h"
 #include "setup.h"
 #include "streaming.h"
+#include "bup-chunk.h"
 
 /* The maximum size for an object header. */
 #define MAX_HEADER_LEN 32
@@ -156,39 +157,34 @@ int check_object_signature(struct repository *r, const struct object_id *oid,
 
 int stream_object_signature(struct repository *r, const struct object_id *oid)
 {
-	struct object_id real_oid;
-	unsigned long size;
-	enum object_type obj_type;
-	struct git_istream *st;
-	struct git_hash_ctx c;
-	char hdr[MAX_HEADER_LEN];
-	int hdrlen;
+       struct git_istream *st;
+       enum object_type type;
+       unsigned long size;
+       struct git_hash_ctx c;
+       struct object_id real;
+       unsigned char hdr[MAX_HEADER_LEN];
+       char buf[8192];
+       ssize_t n;
+       int hdrlen;
 
-	st = open_istream(r, oid, &obj_type, &size, NULL);
-	if (!st)
-		return -1;
+       st = open_istream(r, oid, &type, &size, NULL);
+       if (!st)
+               return -1;
 
-	/* Generate the header */
-	hdrlen = format_object_header(hdr, sizeof(hdr), obj_type, size);
+       hdrlen = format_object_header((char *)hdr, sizeof(hdr), type, size);
+       the_hash_algo->init_fn(&c);
+       git_hash_update(&c, hdr, hdrlen);
 
-	/* Sha1.. */
-	r->hash_algo->init_fn(&c);
-	git_hash_update(&c, hdr, hdrlen);
-	for (;;) {
-		char buf[1024 * 16];
-		ssize_t readlen = read_istream(st, buf, sizeof(buf));
+       while ((n = read_istream(st, buf, sizeof(buf))) > 0)
+               git_hash_update(&c, buf, n);
 
-		if (readlen < 0) {
-			close_istream(st);
-			return -1;
-		}
-		if (!readlen)
-			break;
-		git_hash_update(&c, buf, readlen);
-	}
-	git_hash_final_oid(&real_oid, &c);
-	close_istream(st);
-	return !oideq(oid, &real_oid) ? -1 : 0;
+       close_istream(st);
+
+       if (n < 0)
+               return -1;
+
+       git_hash_final_oid(&real, &c);
+       return oideq(oid, &real) ? 0 : -1;
 }
 
 /*
@@ -1057,9 +1053,18 @@ int write_object_file_flags(const void *buf, unsigned long len,
 	struct repository *repo = the_repository;
 	const struct git_hash_algo *algo = repo->hash_algo;
 	const struct git_hash_algo *compat = repo->compat_hash_algo;
-	struct object_id compat_oid;
-	char hdr[MAX_HEADER_LEN];
-	int hdrlen = sizeof(hdr);
+       struct object_id compat_oid;
+       char hdr[MAX_HEADER_LEN];
+       int hdrlen = sizeof(hdr);
+       struct strbuf chunked = STRBUF_INIT;
+
+       if (type == OBJ_BLOB && bup_chunking_enabled() &&
+	   !(flags & WRITE_OBJECT_FILE_NO_CHUNK)) {
+	       if (bup_chunk_blob(buf, len, &chunked))
+		       return -1;
+	       buf = chunked.buf;
+	       len = chunked.len;
+       }
 
 	/* Generate compat_oid */
 	if (compat) {
@@ -1080,14 +1085,22 @@ int write_object_file_flags(const void *buf, unsigned long len,
 	/* Normally if we have it in the pack then we do not bother writing
 	 * it out into .git/objects/??/?{38} file.
 	 */
-	write_object_file_prepare(algo, buf, len, type, oid, hdr, &hdrlen);
-	if (freshen_packed_object(oid) || freshen_loose_object(oid))
-		return 0;
-	if (write_loose_object(oid, hdr, hdrlen, buf, len, 0, flags))
-		return -1;
-	if (compat)
-		return repo_add_loose_object_map(repo, oid, &compat_oid);
-	return 0;
+       write_object_file_prepare(algo, buf, len, type, oid, hdr, &hdrlen);
+       if (freshen_packed_object(oid) || freshen_loose_object(oid)) {
+	       strbuf_release(&chunked);
+	       return 0;
+       }
+       if (write_loose_object(oid, hdr, hdrlen, buf, len, 0, flags)) {
+	       strbuf_release(&chunked);
+	       return -1;
+       }
+       if (compat) {
+	       int ret = repo_add_loose_object_map(repo, oid, &compat_oid);
+	       strbuf_release(&chunked);
+	       return ret;
+       }
+       strbuf_release(&chunked);
+       return 0;
 }
 
 int force_object_loose(const struct object_id *oid, time_t mtime)
@@ -1600,17 +1613,36 @@ int read_loose_object(const char *path,
 		if (check_stream_oid(&stream, hdr, *size, path, expected_oid) < 0)
 			goto out_inflate;
 	} else {
-		*contents = unpack_loose_rest(&stream, hdr, *size, expected_oid);
-		if (!*contents) {
-			error(_("unable to unpack contents of %s"), path);
-			goto out_inflate;
-		}
-		hash_object_file(the_repository->hash_algo,
-				 *contents, *size,
-				 *oi->typep, real_oid);
-		if (!oideq(expected_oid, real_oid))
-			goto out_inflate;
-	}
+	       *contents = unpack_loose_rest(&stream, hdr, *size, expected_oid);
+	       if (!*contents) {
+		       error(_("unable to unpack contents of %s"), path);
+		       goto out_inflate;
+	       }
+	       hash_object_file(the_repository->hash_algo,
+				*contents, *size,
+				*oi->typep, real_oid);
+	       if (!oideq(expected_oid, real_oid))
+		       goto out_inflate;
+
+               {
+                       struct strbuf out = STRBUF_INIT;
+                       int dechunked = bup_maybe_dechunk(the_repository,
+                                                         *oi->typep,
+                                                         *contents,
+                                                         *size,
+                                                         &out);
+                       if (dechunked < 0) {
+                               strbuf_release(&out);
+                               goto out_inflate;
+                       } else if (dechunked > 0) {
+                               size_t new_size;
+                               free(*contents);
+                               *contents = strbuf_detach(&out, &new_size);
+                               if (size)
+                                       *size = new_size;
+                       }
+               }
+       }
 
 	ret = 0; /* everything checks out */
 

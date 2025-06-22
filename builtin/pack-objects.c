@@ -34,6 +34,7 @@
 #include "object-file.h"
 #include "object-store.h"
 #include "replace-object.h"
+#include "bup-chunk.h"
 #include "dir.h"
 #include "midx.h"
 #include "trace2.h"
@@ -337,13 +338,13 @@ static void *get_delta(struct object_entry *entry)
 	void *buf, *base_buf, *delta_buf;
 	enum object_type type;
 
-	buf = repo_read_object_file(the_repository, &entry->idx.oid, &type,
-				    &size);
+   buf = repo_read_raw_object_file(the_repository, &entry->idx.oid, &type,
+                                 &size);
 	if (!buf)
 		die(_("unable to read %s"), oid_to_hex(&entry->idx.oid));
-	base_buf = repo_read_object_file(the_repository,
-					 &DELTA(entry)->idx.oid, &type,
-					 &base_size);
+   base_buf = repo_read_raw_object_file(the_repository,
+                                   &DELTA(entry)->idx.oid, &type,
+                                   &base_size);
 	if (!base_buf)
 		die("unable to read %s",
 		    oid_to_hex(&DELTA(entry)->idx.oid));
@@ -498,17 +499,17 @@ static unsigned long write_no_reuse_object(struct hashfile *f, struct object_ent
 	struct git_istream *st = NULL;
 	const unsigned hashsz = the_hash_algo->rawsz;
 
-	if (!usable_delta) {
-		if (oe_type(entry) == OBJ_BLOB &&
-		    oe_size_greater_than(&to_pack, entry,
-					 repo_settings_get_big_file_threshold(the_repository)) &&
-		    (st = open_istream(the_repository, &entry->idx.oid, &type,
-				       &size, NULL)) != NULL)
-			buf = NULL;
+       if (!usable_delta) {
+               if (oe_type(entry) == OBJ_BLOB &&
+                   oe_size_greater_than(&to_pack, entry,
+                                        BUP_CHUNK_THRESHOLD) &&
+                   (st = open_istream(the_repository, &entry->idx.oid, &type,
+                                      &size, NULL)) != NULL)
+                       buf = NULL;
 		else {
-			buf = repo_read_object_file(the_repository,
-						    &entry->idx.oid, &type,
-						    &size);
+                       buf = repo_read_raw_object_file(the_repository,
+                                                   &entry->idx.oid, &type,
+                                                   &size);
 			if (!buf)
 				die(_("unable to read %s"),
 				    oid_to_hex(&entry->idx.oid));
@@ -1895,7 +1896,7 @@ static struct pbase_tree_cache *pbase_tree_get(const struct object_id *oid)
 	/* Did not find one.  Either we got a bogus request or
 	 * we need to read and perhaps cache.
 	 */
-	data = repo_read_object_file(the_repository, oid, &type, &size);
+       data = repo_read_raw_object_file(the_repository, oid, &type, &size);
 	if (!data)
 		return NULL;
 	if (type != OBJ_TREE) {
@@ -2760,9 +2761,9 @@ static int try_delta(struct unpacked *trg, struct unpacked *src,
 	/* Load data if not already done */
 	if (!trg->data) {
 		packing_data_lock(&to_pack);
-		trg->data = repo_read_object_file(the_repository,
-						  &trg_entry->idx.oid, &type,
-						  &sz);
+               trg->data = repo_read_raw_object_file(the_repository,
+                                                 &trg_entry->idx.oid, &type,
+                                                 &sz);
 		packing_data_unlock(&to_pack);
 		if (!trg->data)
 			die(_("object %s cannot be read"),
@@ -2775,9 +2776,9 @@ static int try_delta(struct unpacked *trg, struct unpacked *src,
 	}
 	if (!src->data) {
 		packing_data_lock(&to_pack);
-		src->data = repo_read_object_file(the_repository,
-						  &src_entry->idx.oid, &type,
-						  &sz);
+               src->data = repo_read_raw_object_file(the_repository,
+                                                 &src_entry->idx.oid, &type,
+                                                 &sz);
 		packing_data_unlock(&to_pack);
 		if (!src->data) {
 			if (src_entry->preferred_base) {

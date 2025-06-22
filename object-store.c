@@ -8,6 +8,7 @@
 #include "environment.h"
 #include "gettext.h"
 #include "hex.h"
+#include "bup-chunk.h"
 #include "khash.h"
 #include "lockfile.h"
 #include "loose.h"
@@ -860,21 +861,52 @@ int pretend_object_file(struct repository *repo,
  * error messages themselves.
  */
 void *repo_read_object_file(struct repository *r,
-			    const struct object_id *oid,
-			    enum object_type *type,
-			    unsigned long *size)
+                            const struct object_id *oid,
+                            enum object_type *type,
+                            unsigned long *size)
 {
 	struct object_info oi = OBJECT_INFO_INIT;
 	unsigned flags = OBJECT_INFO_DIE_IF_CORRUPT | OBJECT_INFO_LOOKUP_REPLACE;
 	void *data;
 
-	oi.typep = type;
-	oi.sizep = size;
-	oi.contentp = &data;
-	if (oid_object_info_extended(r, oid, &oi, flags))
-		return NULL;
+       oi.typep = type;
+       oi.sizep = size;
+       oi.contentp = &data;
+       if (oid_object_info_extended(r, oid, &oi, flags))
+	       return NULL;
+       if (type) {
+               struct strbuf out = STRBUF_INIT;
+               int dechunked = bup_maybe_dechunk(r, *type, data, *size, &out);
 
-	return data;
+               if (dechunked < 0) {
+                       strbuf_release(&out);
+                       free(data);
+                       return NULL;
+               } else if (dechunked > 0) {
+                       free(data);
+                       *size = out.len;
+                       data = strbuf_detach(&out, NULL);
+               }
+       }
+
+       return data;
+}
+
+void *repo_read_raw_object_file(struct repository *r,
+                               const struct object_id *oid,
+                               enum object_type *type,
+                               unsigned long *size)
+{
+       struct object_info oi = OBJECT_INFO_INIT;
+       unsigned flags = OBJECT_INFO_DIE_IF_CORRUPT | OBJECT_INFO_LOOKUP_REPLACE;
+       void *data;
+
+       oi.typep = type;
+       oi.sizep = size;
+       oi.contentp = &data;
+       if (oid_object_info_extended(r, oid, &oi, flags))
+               return NULL;
+       return data;
 }
 
 void *read_object_with_reference(struct repository *r,

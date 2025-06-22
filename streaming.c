@@ -11,6 +11,8 @@
 #include "repository.h"
 #include "object-file.h"
 #include "object-store.h"
+#include "bup-chunk.h"
+#include "hex.h"
 #include "replace-object.h"
 #include "packfile.h"
 
@@ -392,58 +394,42 @@ static ssize_t read_istream_incore(struct git_istream *st, char *buf, size_t sz)
 }
 
 static int open_istream_incore(struct git_istream *st, struct repository *r,
-			       const struct object_id *oid, enum object_type *type)
+                               const struct object_id *oid, enum object_type *type)
 {
-	struct object_info oi = OBJECT_INFO_INIT;
+        struct object_info oi = OBJECT_INFO_INIT;
 
 	st->u.incore.read_ptr = 0;
 	st->close = close_istream_incore;
 	st->read = read_istream_incore;
 
-	oi.typep = type;
-	oi.sizep = &st->size;
-	oi.contentp = (void **)&st->u.incore.buf;
-	return oid_object_info_extended(r, oid, &oi,
-					OBJECT_INFO_DIE_IF_CORRUPT);
+       oi.typep = type;
+       oi.sizep = &st->size;
+       oi.contentp = (void **)&st->u.incore.buf;
+       if (oid_object_info_extended(r, oid, &oi, OBJECT_INFO_DIE_IF_CORRUPT))
+               return -1;
+
+       {
+               struct strbuf out = STRBUF_INIT;
+               int dechunked = bup_maybe_dechunk(r, *type, st->u.incore.buf,
+                                                 st->size, &out);
+               if (dechunked < 0) {
+                       strbuf_release(&out);
+                       return -1;
+               } else if (dechunked > 0) {
+                       size_t new_size;
+                       free(st->u.incore.buf);
+                       st->u.incore.buf = strbuf_detach(&out, &new_size);
+                       st->size = new_size;
+               }
+       }
+
+       return 0;
 }
 
 /*****************************************************************************
  * static helpers variables and functions for users of streaming interface
  *****************************************************************************/
 
-static int istream_source(struct git_istream *st,
-			  struct repository *r,
-			  const struct object_id *oid,
-			  enum object_type *type)
-{
-	unsigned long size;
-	int status;
-	struct object_info oi = OBJECT_INFO_INIT;
-
-	oi.typep = type;
-	oi.sizep = &size;
-	status = oid_object_info_extended(r, oid, &oi, 0);
-	if (status < 0)
-		return status;
-
-	switch (oi.whence) {
-	case OI_LOOSE:
-		st->open = open_istream_loose;
-		return 0;
-	case OI_PACKED:
-		if (!oi.u.packed.is_delta &&
-		    repo_settings_get_big_file_threshold(the_repository) < size) {
-			st->u.in_pack.pack = oi.u.packed.pack;
-			st->u.in_pack.pos = oi.u.packed.offset;
-			st->open = open_istream_pack_non_delta;
-			return 0;
-		}
-		/* fallthru */
-	default:
-		st->open = open_istream_incore;
-		return 0;
-	}
-}
 
 /****************************************************************
  * Users of streaming interface
@@ -462,26 +448,44 @@ ssize_t read_istream(struct git_istream *st, void *buf, size_t sz)
 }
 
 struct git_istream *open_istream(struct repository *r,
-				 const struct object_id *oid,
-				 enum object_type *type,
-				 unsigned long *size,
-				 struct stream_filter *filter)
+                                 const struct object_id *oid,
+                                 enum object_type *type,
+                                 unsigned long *size,
+                                 struct stream_filter *filter)
 {
-	struct git_istream *st = xmalloc(sizeof(*st));
-	const struct object_id *real = lookup_replace_object(r, oid);
-	int ret = istream_source(st, r, real, type);
+       struct git_istream *st = xmalloc(sizeof(*st));
+       const struct object_id *real = lookup_replace_object(r, oid);
+       unsigned long objsize;
+       struct object_info oi = OBJECT_INFO_INIT;
 
-	if (ret) {
-		free(st);
-		return NULL;
-	}
+       oi.typep = type;
+       oi.sizep = &objsize;
+       if (oid_object_info_extended(r, real, &oi, 0)) {
+               free(st);
+               return NULL;
+       }
 
-	if (st->open(st, r, real, type)) {
-		if (open_istream_incore(st, r, real, type)) {
-			free(st);
-			return NULL;
-		}
-	}
+       if (*type == OBJ_BLOB && bup_chunking_enabled()) {
+               st->open = open_istream_incore;
+       } else if (oi.whence == OI_PACKED && !oi.u.packed.is_delta) {
+               st->u.in_pack.pack = oi.u.packed.pack;
+               st->u.in_pack.pos = oi.u.packed.offset;
+               if (*type == OBJ_BLOB && objsize <= BUP_CHUNK_THRESHOLD)
+                       st->open = open_istream_incore;
+               else
+                       st->open = open_istream_pack_non_delta;
+       } else if (oi.whence == OI_LOOSE) {
+               st->open = open_istream_loose;
+       } else {
+               st->open = open_istream_incore;
+       }
+
+       if (st->open(st, r, real, type)) {
+               if (open_istream_incore(st, r, real, type)) {
+                       free(st);
+                       return NULL;
+               }
+       }
 	if (filter) {
 		/* Add "&& !is_null_stream_filter(filter)" for performance */
 		struct git_istream *nst = attach_stream_filter(st, filter);

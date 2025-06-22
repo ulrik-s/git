@@ -6,6 +6,8 @@
 #include "object.h"
 #include "replace-object.h"
 #include "object-file.h"
+#include "strbuf.h"
+#include "bup-chunk.h"
 #include "blob.h"
 #include "statinfo.h"
 #include "tree.h"
@@ -314,15 +316,15 @@ struct object *parse_object_with_flags(struct repository *r,
 			return &commit->object;
 	}
 
-	if ((!obj || obj->type == OBJ_BLOB) &&
-	    oid_object_info(r, oid, NULL) == OBJ_BLOB) {
-		if (!skip_hash && stream_object_signature(r, repl) < 0) {
-			error(_("hash mismatch %s"), oid_to_hex(oid));
-			return NULL;
-		}
-		parse_blob_buffer(lookup_blob(r, oid));
-		return lookup_object(r, oid);
-	}
+       if ((!obj || obj->type == OBJ_BLOB) &&
+           oid_object_info(r, oid, NULL) == OBJ_BLOB) {
+               if (!skip_hash && stream_object_signature(r, repl) < 0) {
+                       error(_("hash mismatch %s"), oid_to_hex(oid));
+                       return NULL;
+               }
+               parse_blob_buffer(lookup_blob(r, oid));
+               return lookup_object(r, oid);
+       }
 
 	/*
 	 * If the caller does not care about the tree buffer and does not
@@ -335,14 +337,29 @@ struct object *parse_object_with_flags(struct repository *r,
 		return &lookup_tree(r, oid)->object;
 	}
 
-	buffer = repo_read_object_file(r, oid, &type, &size);
-	if (buffer) {
-		if (!skip_hash &&
-		    check_object_signature(r, repl, buffer, size, type) < 0) {
-			free(buffer);
-			error(_("hash mismatch %s"), oid_to_hex(repl));
-			return NULL;
-		}
+       buffer = repo_read_raw_object_file(r, oid, &type, &size);
+       if (buffer) {
+               if (!skip_hash &&
+                   check_object_signature(r, repl, buffer, size, type) < 0) {
+                       free(buffer);
+                       error(_("hash mismatch %s"), oid_to_hex(repl));
+                       return NULL;
+               }
+
+               {
+                       struct strbuf out = STRBUF_INIT;
+                       int dechunked = bup_maybe_dechunk(r, type, buffer, size,
+                                                         &out);
+                       if (dechunked < 0) {
+                               strbuf_release(&out);
+                               free(buffer);
+                               return NULL;
+                       } else if (dechunked > 0) {
+                               free(buffer);
+                               size = out.len;
+                               buffer = strbuf_detach(&out, NULL);
+                       }
+               }
 
 		obj = parse_object_buffer(r, oid, type, size,
 					  buffer, &eaten);
