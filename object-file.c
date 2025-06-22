@@ -157,39 +157,20 @@ int check_object_signature(struct repository *r, const struct object_id *oid,
 
 int stream_object_signature(struct repository *r, const struct object_id *oid)
 {
-	struct object_id real_oid;
-	unsigned long size;
-	enum object_type obj_type;
-	struct git_istream *st;
-	struct git_hash_ctx c;
-	char hdr[MAX_HEADER_LEN];
-	int hdrlen;
+       unsigned long size;
+       enum object_type type;
+       void *buf;
 
-	st = open_istream(r, oid, &obj_type, &size, NULL);
-	if (!st)
-		return -1;
+       buf = repo_read_raw_object_file(r, oid, &type, &size);
+       if (!buf)
+               return -1;
 
-	/* Generate the header */
-	hdrlen = format_object_header(hdr, sizeof(hdr), obj_type, size);
-
-	/* Sha1.. */
-	r->hash_algo->init_fn(&c);
-	git_hash_update(&c, hdr, hdrlen);
-	for (;;) {
-		char buf[1024 * 16];
-		ssize_t readlen = read_istream(st, buf, sizeof(buf));
-
-		if (readlen < 0) {
-			close_istream(st);
-			return -1;
-		}
-		if (!readlen)
-			break;
-		git_hash_update(&c, buf, readlen);
-	}
-	git_hash_final_oid(&real_oid, &c);
-	close_istream(st);
-	return !oideq(oid, &real_oid) ? -1 : 0;
+       if (check_object_signature(r, oid, buf, size, type) < 0) {
+               free(buf);
+               return -1;
+       }
+       free(buf);
+       return 0;
 }
 
 /*
