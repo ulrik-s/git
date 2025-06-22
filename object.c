@@ -318,31 +318,12 @@ struct object *parse_object_with_flags(struct repository *r,
 
        if ((!obj || obj->type == OBJ_BLOB) &&
            oid_object_info(r, oid, NULL) == OBJ_BLOB) {
-               buffer = repo_read_raw_object_file(r, repl, &type, &size);
-               if (!buffer)
-                       return NULL;
-               if (!skip_hash &&
-                   check_object_signature(r, repl, buffer, size, type) < 0) {
-                       free(buffer);
+               if (!skip_hash && stream_object_signature(r, repl) < 0) {
                        error(_("hash mismatch %s"), oid_to_hex(oid));
                        return NULL;
                }
-               if (bup_is_chunk_list(buffer, size, r->hash_algo->hexsz)) {
-                       struct strbuf out = STRBUF_INIT;
-                       if (bup_dechunk_blob(r, buffer, size, &out)) {
-                               strbuf_release(&out);
-                               free(buffer);
-                               return NULL;
-                       }
-                       free(buffer);
-                       size = out.len;
-                       buffer = strbuf_detach(&out, NULL);
-               }
                parse_blob_buffer(lookup_blob(r, oid));
-               obj = parse_object_buffer(r, oid, OBJ_BLOB, size, buffer, &eaten);
-               if (!eaten)
-                       free(buffer);
-               return obj;
+               return lookup_object(r, oid);
        }
 
 	/*
