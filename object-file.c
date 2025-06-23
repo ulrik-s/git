@@ -1286,6 +1286,8 @@ int index_path(struct index_state *istate, struct object_id *oid,
 {
        struct strbuf sb = STRBUF_INIT;
        int rc = 0;
+       /* istate is unused since regular files are written as blob trees */
+       (void)istate;
 
 	switch (st->st_mode & S_IFMT) {
        case S_IFREG:
