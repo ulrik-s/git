@@ -12,6 +12,7 @@
 #include "object.h"
 #include "blob.h"
 #include "tree.h"
+#include "blob-tree.h"
 #include "commit.h"
 #include "repository.h"
 #include "tag.h"
@@ -20,11 +21,12 @@
 #define BLOCKING 1024
 
 union any_object {
-	struct object object;
-	struct blob blob;
-	struct tree tree;
-	struct commit commit;
-	struct tag tag;
+        struct object object;
+        struct blob blob;
+        struct tree tree;
+        struct blob_tree blob_tree;
+        struct commit commit;
+        struct tag tag;
 };
 
 struct alloc_state {
@@ -79,9 +81,17 @@ void *alloc_blob_node(struct repository *r)
 
 void *alloc_tree_node(struct repository *r)
 {
-	struct tree *t = alloc_node(r->parsed_objects->tree_state, sizeof(struct tree));
-	t->object.type = OBJ_TREE;
-	return t;
+        struct tree *t = alloc_node(r->parsed_objects->tree_state, sizeof(struct tree));
+        t->object.type = OBJ_TREE;
+        return t;
+}
+
+void *alloc_blob_tree_node(struct repository *r)
+{
+        struct blob_tree *t = alloc_node(r->parsed_objects->blob_tree_state,
+                                         sizeof(struct blob_tree));
+        t->object.type = OBJ_BLOB_TREE;
+        return t;
 }
 
 void *alloc_tag_node(struct repository *r)

@@ -12,9 +12,10 @@ struct parsed_object_pool {
 	int nr_objs, obj_hash_size;
 
 	/* TODO: migrate alloc_states to mem-pool? */
-	struct alloc_state *blob_state;
-	struct alloc_state *tree_state;
-	struct alloc_state *commit_state;
+        struct alloc_state *blob_state;
+        struct alloc_state *tree_state;
+        struct alloc_state *blob_tree_state;
+        struct alloc_state *commit_state;
 	struct alloc_state *tag_state;
 	struct alloc_state *object_state;
 
@@ -99,13 +100,13 @@ enum object_type {
 	OBJ_NONE = 0,
 	OBJ_COMMIT = 1,
 	OBJ_TREE = 2,
-	OBJ_BLOB = 3,
-	OBJ_TAG = 4,
-	/* 5 for future expansion */
-	OBJ_OFS_DELTA = 6,
-	OBJ_REF_DELTA = 7,
-	OBJ_ANY,
-	OBJ_MAX
+       OBJ_BLOB = 3,
+       OBJ_TAG = 4,
+       OBJ_BLOB_TREE = 5,
+       OBJ_OFS_DELTA = 6,
+       OBJ_REF_DELTA = 7,
+       OBJ_ANY,
+       OBJ_MAX
 };
 
 /* unknown mode (impossible combination S_IFIFO|S_IFCHR) */
