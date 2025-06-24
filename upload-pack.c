@@ -1269,20 +1269,21 @@ static void write_v0_ref(struct upload_pack_data *data,
 
 		format_symref_info(&symref_info, &data->symref);
 		format_session_id(&session_id, data);
-               packet_fwrite_fmt(stdout, "%s %s%c%s%s%s%s%s%s%s%s object-format=%s agent=%s\n",
-                             oid_to_hex(oid), refname_nons,
-                             0, capabilities,
-                             (data->allow_uor & ALLOW_TIP_SHA1) ?
-                                     " allow-tip-sha1-in-want" : "",
-                             (data->allow_uor & ALLOW_REACHABLE_SHA1) ?
-                                     " allow-reachable-sha1-in-want" : "",
-                             data->no_done ? " no-done" : "",
-                             symref_info.buf,
-                             data->allow_filter ? " filter" : "",
-                             " bblob",
-                             session_id.buf,
-                             the_hash_algo->name,
-                             git_user_agent_sanitized());
+		packet_fwrite_fmt(stdout,
+			"%s %s%c%s%s%s%s%s%s%s%s object-format=%s agent=%s\n",
+			oid_to_hex(oid), refname_nons,
+			0, capabilities,
+			(data->allow_uor & ALLOW_TIP_SHA1) ?
+			" allow-tip-sha1-in-want" : "",
+			(data->allow_uor & ALLOW_REACHABLE_SHA1) ?
+			" allow-reachable-sha1-in-want" : "",
+			data->no_done ? " no-done" : "",
+			symref_info.buf,
+			data->allow_filter ? " filter" : "",
+			" bblob",
+			session_id.buf,
+			the_hash_algo->name,
+			git_user_agent_sanitized());
 		strbuf_release(&symref_info);
 		strbuf_release(&session_id);
 		data->sent_capabilities = 1;
