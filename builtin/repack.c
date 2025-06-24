@@ -44,22 +44,25 @@ static int convert_to_bblob;
 static char *packdir, *packtmp_name, *packtmp;
 
 static int convert_one_loose(const struct object_id *oid, const char *path,
-	void *data)
-	{
-	/* avoid unused parameter warnings */
-	(void)path;
-	(void)data;
-	enum object_type type;
-	unsigned long size;
-	void *buf = repo_read_object_file(the_repository, oid, &type, &size);
-	if (!buf)
-	return 0;
-	if (type == OBJ_BLOB) {
-	struct object_id new_oid;
-	write_bblob(the_repository, buf, size, &new_oid);
-	}
-	free(buf);
-	return 0;
+                    void *data)
+{
+       enum object_type type;
+       unsigned long size;
+       void *buf;
+
+       /* avoid unused parameter warnings */
+       (void)path;
+       (void)data;
+
+       buf = repo_read_object_file(the_repository, oid, &type, &size);
+       if (!buf)
+               return 0;
+       if (type == OBJ_BLOB) {
+               struct object_id new_oid;
+               write_bblob(the_repository, buf, size, &new_oid);
+       }
+       free(buf);
+       return 0;
 }
 
 static void convert_all_blobs_to_bblob(void)

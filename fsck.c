@@ -482,42 +482,47 @@ static int fsck_walk_tag(struct tag *tag, void *data, struct fsck_options *optio
 }
 
 static int fsck_walk_bblob(struct bblob *bb, void *data,
-			   struct fsck_options *options)
+                           struct fsck_options *options)
 {
-	   enum object_type type;
-	   unsigned long size;
-	   void *buf;
-	   int res = 0;
-	   const char *name = fsck_get_object_name(options, &bb->object.oid);
+           enum object_type type;
+           unsigned long size;
+           size_t oidsz = the_repository->hash_algo->rawsz;
+           void *buf;
+           int cnt;
+           int res = 0;
+           const char *name = fsck_get_object_name(options, &bb->object.oid);
 
-	   buf = repo_read_raw_object_file(the_repository, &bb->object.oid, &type, &size);
-	   if (!buf || type != OBJ_BBLOB)
-	       return -1;
+           buf = repo_read_raw_object_file(the_repository, &bb->object.oid, &type, &size);
+           if (!buf || type != OBJ_BBLOB)
+               return -1;
 
-	   size_t oidsz = the_repository->hash_algo->rawsz;
-	   int cnt = size / oidsz;
-	   for (int i = 0; i < cnt; i++) {
-	       struct object_id child;
-	       memset(&child, 0, sizeof(child));
-	       memcpy(child.hash, (char *)buf + i * oidsz, oidsz);
-	       if (is_null_oid(&child))
-		       continue;
-	       enum object_type ct = oid_object_info(the_repository, &child, NULL);
-	       if (ct <= 0)
-		       continue;
-	       struct object *obj = lookup_object_by_type(the_repository, &child, ct);
-	       if (name && obj)
-		       fsck_put_object_name(options, &child, "%s#%d", name, i);
-	       int result = options->walk(obj, ct, data, options);
-	       if (result < 0) {
-		       free(buf);
-		       return result;
-	       }
-	       if (!res)
-		       res = result;
-	   }
-	   free(buf);
-	   return res;
+           cnt = size / oidsz;
+           for (int i = 0; i < cnt; i++) {
+               struct object_id child;
+               enum object_type ct;
+               struct object *obj;
+               int result;
+
+               memset(&child, 0, sizeof(child));
+               memcpy(child.hash, (char *)buf + i * oidsz, oidsz);
+               if (is_null_oid(&child))
+                       continue;
+               ct = oid_object_info(the_repository, &child, NULL);
+               if (ct <= 0)
+                       continue;
+               obj = lookup_object_by_type(the_repository, &child, ct);
+               if (name && obj)
+                       fsck_put_object_name(options, &child, "%s#%d", name, i);
+               result = options->walk(obj, ct, data, options);
+               if (result < 0) {
+                       free(buf);
+                       return result;
+               }
+               if (!res)
+                       res = result;
+           }
+           free(buf);
+           return res;
 }
 
 int fsck_walk(struct object *obj, void *data, struct fsck_options *options)
@@ -1248,42 +1253,46 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
 }
 
 static int fsck_bblob(const struct object_id *oid, const char *buf,
-		     unsigned long size, struct fsck_options *options)
+                     unsigned long size, struct fsck_options *options)
 {
-	   int ret = 0;
-	   size_t oidsz = the_repository->hash_algo->rawsz;
+           int ret = 0;
+           size_t oidsz = the_repository->hash_algo->rawsz;
+           int i;
 
 	   if (size != oidsz * BBLOB_FANOUT)
 	       ret |= report(options, oid, OBJ_BBLOB, FSCK_MSG_BAD_TYPE,
 			      "invalid bblob size");
 
-	   for (int i = 0; i < BBLOB_FANOUT && i * oidsz < size; i++) {
-	       struct object_id child;
-	       memset(&child, 0, sizeof(child));
-	       memcpy(child.hash, buf + i * oidsz, oidsz);
-	       if (is_null_oid(&child))
-		       continue;
+           for (i = 0; i < BBLOB_FANOUT && i * oidsz < size; i++) {
+               struct object_id child;
+               enum object_type t;
+               unsigned long csz;
+               void *cbuf;
 
-	       enum object_type t = oid_object_info(the_repository, &child, NULL);
-	       if (t <= 0) {
-		       ret |= report(options, oid, OBJ_BBLOB,
-				      FSCK_MSG_BAD_OBJECT_SHA1,
-				      "missing child object");
-		       continue;
-	       }
-	       if (t != OBJ_BLOB && t != OBJ_BBLOB)
-		       ret |= report(options, oid, OBJ_BBLOB, FSCK_MSG_BAD_TYPE,
-				      "child has invalid type");
-	       else if (t == OBJ_BBLOB) {
-		       unsigned long csz;
-		       void *cbuf = repo_read_raw_object_file(the_repository,
-							 &child, &t, &csz);
-		       if (!cbuf) {
-			       ret |= report(options, oid, OBJ_BBLOB,
-					      FSCK_MSG_BAD_OBJECT_SHA1,
-					      "cannot read child");
-			       continue;
-		       }
+               memset(&child, 0, sizeof(child));
+               memcpy(child.hash, buf + i * oidsz, oidsz);
+               if (is_null_oid(&child))
+                       continue;
+
+               t = oid_object_info(the_repository, &child, NULL);
+               if (t <= 0) {
+                       ret |= report(options, oid, OBJ_BBLOB,
+                                      FSCK_MSG_BAD_OBJECT_SHA1,
+                                      "missing child object");
+                       continue;
+               }
+               if (t != OBJ_BLOB && t != OBJ_BBLOB)
+                       ret |= report(options, oid, OBJ_BBLOB, FSCK_MSG_BAD_TYPE,
+                                      "child has invalid type");
+               else if (t == OBJ_BBLOB) {
+                       cbuf = repo_read_raw_object_file(the_repository,
+                                                         &child, &t, &csz);
+                       if (!cbuf) {
+                               ret |= report(options, oid, OBJ_BBLOB,
+                                              FSCK_MSG_BAD_OBJECT_SHA1,
+                                              "cannot read child");
+                               continue;
+                       }
 		       ret |= fsck_bblob(&child, cbuf, csz, options);
 		       free(cbuf);
 	       }

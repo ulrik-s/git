@@ -25,57 +25,66 @@ void parse_bblob_buffer(struct bblob *item)
 }
 
 static int write_bblob_tree(struct repository *r, struct object_id *oids,
-			   int nr, struct object_id *oid)
+                           int nr, struct object_id *oid)
 {
        size_t oidsz = r->hash_algo->rawsz;
+       int ret;
+       int groups;
+       struct object_id *tmp;
+       int i;
+
        if (nr <= BBLOB_FANOUT) {
-	       size_t rawlen = oidsz * BBLOB_FANOUT;
-	       void *raw = xcalloc(1, rawlen);
-	       for (int i = 0; i < nr; i++)
-		       memcpy((char *)raw + i * oidsz, oids[i].hash, oidsz);
-	       int ret = write_object_file(raw, rawlen, OBJ_BBLOB, oid);
-	       free(raw);
-	       return ret;
+               size_t rawlen = oidsz * BBLOB_FANOUT;
+               void *raw = xcalloc(1, rawlen);
+
+               for (i = 0; i < nr; i++)
+                       memcpy((char *)raw + i * oidsz, oids[i].hash, oidsz);
+
+               ret = write_object_file(raw, rawlen, OBJ_BBLOB, oid);
+               free(raw);
+               return ret;
        }
 
-       int groups = (nr + BBLOB_FANOUT - 1) / BBLOB_FANOUT;
-       struct object_id *tmp = xcalloc(groups, sizeof(*tmp));
-       for (int i = 0; i < groups; i++) {
-	       int this = nr - i * BBLOB_FANOUT;
-	       if (this > BBLOB_FANOUT)
-		       this = BBLOB_FANOUT;
-	       if (write_bblob_tree(r, oids + i * BBLOB_FANOUT, this, &tmp[i])) {
-		       free(tmp);
-		       return -1;
-	       }
+       groups = (nr + BBLOB_FANOUT - 1) / BBLOB_FANOUT;
+       tmp = xcalloc(groups, sizeof(*tmp));
+       for (i = 0; i < groups; i++) {
+               int this = nr - i * BBLOB_FANOUT;
+               if (this > BBLOB_FANOUT)
+                       this = BBLOB_FANOUT;
+               if (write_bblob_tree(r, oids + i * BBLOB_FANOUT, this, &tmp[i])) {
+                       free(tmp);
+                       return -1;
+               }
        }
-       int ret = write_bblob_tree(r, tmp, groups, oid);
+       ret = write_bblob_tree(r, tmp, groups, oid);
        free(tmp);
        return ret;
 }
 
 int write_bblob(struct repository *r, const void *buf, unsigned long len,
-	       struct object_id *oid)
+               struct object_id *oid)
 {
        size_t oids_alloc = 0, oids_nr = 0;
        struct object_id *oids = NULL;
        unsigned char window[64];
        size_t win_len = 0;
        size_t chunk_start = 0;
+       size_t i;
+       int ret;
 
-       for (size_t i = 0; i < len; i++) {
-	       window[win_len % 64] = ((const unsigned char *)buf)[i];
+       for (i = 0; i < len; i++) {
+               window[win_len % 64] = ((const unsigned char *)buf)[i];
 	       if (win_len >= 63 && i - chunk_start + 1 >= BBLOB_CHUNK_GOAL) {
-		       struct git_hash_ctx c;
-		       unsigned char out[GIT_MAX_RAWSZ];
+                       struct git_hash_ctx c;
+                       unsigned char out[GIT_MAX_RAWSZ];
+                       unsigned short bits;
 		       r->hash_algo->init_fn(&c);
 		       git_hash_update(&c, window, 64);
-		       git_hash_final(out, &c);
-		       unsigned short bits =
-			       (out[r->hash_algo->rawsz - 2] << 8) |
-			       out[r->hash_algo->rawsz - 1];
+                       git_hash_final(out, &c);
+                       bits = (out[r->hash_algo->rawsz - 2] << 8) |
+                               out[r->hash_algo->rawsz - 1];
 		       if ((bits & 0x1fff) == 0) {
-			       struct object_id ch;
+                               struct object_id ch;
 			       disable_bblob_conversion++;
 			       if (write_object_file((const char *)buf + chunk_start,
 						    i - chunk_start + 1,
@@ -107,7 +116,7 @@ int write_bblob(struct repository *r, const void *buf, unsigned long len,
 	       oidcpy(&oids[oids_nr++], &ch);
        }
 
-       int ret = write_bblob_tree(r, oids, oids_nr, oid);
+       ret = write_bblob_tree(r, oids, oids_nr, oid);
        free(oids);
        return ret;
 }
@@ -128,10 +137,15 @@ static void *read_raw(struct repository *r, const struct object_id *oid,
 }
 
 static void *read_bblob_rec(struct repository *r, const struct object_id *oid,
-			    unsigned long *size)
+                            unsigned long *size)
 {
        enum object_type t;
        unsigned long sz;
+       size_t oidsz = r->hash_algo->rawsz;
+       int cnt;
+       unsigned long out_sz = 0;
+       char *out = NULL;
+       int i;
        void *data = read_raw(r, oid, &t, &sz);
        if (!data)
 	       return NULL;
@@ -144,23 +158,25 @@ static void *read_bblob_rec(struct repository *r, const struct object_id *oid,
 	       return NULL;
        }
 
-       size_t oidsz = r->hash_algo->rawsz;
-       int cnt = sz / oidsz;
-       unsigned long out_sz = 0;
-       char *out = NULL;
-       for (int i = 0; i < cnt; i++) {
-	       struct object_id child;
-	       memset(&child, 0, sizeof(child));
-	       memcpy(child.hash, (char *)data + i * oidsz, oidsz);
-	       if (is_null_oid(&child))
-		       continue;
-	       unsigned long csz;
-	       void *cbuf = read_bblob_rec(r, &child, &csz);
-	       if (!cbuf) {
-		       free(out);
-		       free(data);
-		       return NULL;
-	       }
+
+       cnt = sz / oidsz;
+
+       for (i = 0; i < cnt; i++) {
+               struct object_id child;
+               unsigned long csz;
+               void *cbuf;
+
+               memset(&child, 0, sizeof(child));
+               memcpy(child.hash, (char *)data + i * oidsz, oidsz);
+               if (is_null_oid(&child))
+                       continue;
+
+               cbuf = read_bblob_rec(r, &child, &csz);
+               if (!cbuf) {
+                       free(out);
+                       free(data);
+                       return NULL;
+               }
 	       REALLOC_ARRAY(out, out_sz + csz);
 	       memcpy(out + out_sz, cbuf, csz);
 	       out_sz += csz;
@@ -175,9 +191,13 @@ static unsigned long size_bblob_rec(struct repository *r, const struct object_id
 {
        enum object_type t;
        unsigned long sz;
+       size_t oidsz = r->hash_algo->rawsz;
+       int cnt;
+       unsigned long total = 0;
+       int i;
        void *data = read_raw(r, oid, &t, &sz);
        if (!data)
-	       return 0;
+               return 0;
        if (t == OBJ_BLOB) {
 	       free(data);
 	       return sz;
@@ -186,16 +206,17 @@ static unsigned long size_bblob_rec(struct repository *r, const struct object_id
 	       free(data);
 	       return 0;
        }
-       size_t oidsz = r->hash_algo->rawsz;
-       int cnt = sz / oidsz;
-       unsigned long total = 0;
-       for (int i = 0; i < cnt; i++) {
-	       struct object_id child;
-	       memset(&child, 0, sizeof(child));
-	       memcpy(child.hash, (char *)data + i * oidsz, oidsz);
-	       if (is_null_oid(&child))
-		       continue;
-	       total += size_bblob_rec(r, &child);
+       cnt = sz / oidsz;
+
+       for (i = 0; i < cnt; i++) {
+               struct object_id child;
+
+               memset(&child, 0, sizeof(child));
+               memcpy(child.hash, (char *)data + i * oidsz, oidsz);
+               if (is_null_oid(&child))
+                       continue;
+
+               total += size_bblob_rec(r, &child);
        }
        free(data);
        return total;
