@@ -285,6 +285,7 @@ libgit_sources = [
   'bisect.c',
   'blame.c',
   'blob.c',
+  'bblob.c',
   'bloom.c',
   'branch.c',
   'bulk-checkin.c',
