@@ -18,6 +18,7 @@
 #include "packfile.h"
 #include "prune-packed.h"
 #include "object-store.h"
+#include "object-file.h"
 #include "bblob.h"
 #include "promisor-remote.h"
 #include "shallow.h"
