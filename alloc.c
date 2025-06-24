@@ -11,6 +11,7 @@
 #include "git-compat-util.h"
 #include "object.h"
 #include "blob.h"
+#include "bblob.h"
 #include "tree.h"
 #include "commit.h"
 #include "repository.h"
@@ -75,6 +76,13 @@ void *alloc_blob_node(struct repository *r)
 	struct blob *b = alloc_node(r->parsed_objects->blob_state, sizeof(struct blob));
 	b->object.type = OBJ_BLOB;
 	return b;
+}
+
+void *alloc_bblob_node(struct repository *r)
+{
+       struct bblob *bb = alloc_node(r->parsed_objects->blob_state, sizeof(struct bblob));
+       bb->object.type = OBJ_BBLOB;
+       return bb;
 }
 
 void *alloc_tree_node(struct repository *r)

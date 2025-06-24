@@ -974,6 +974,7 @@ LIB_OBJS += base85.o
 LIB_OBJS += bisect.o
 LIB_OBJS += blame.o
 LIB_OBJS += blob.o
+LIB_OBJS += bblob.o
 LIB_OBJS += bloom.o
 LIB_OBJS += branch.o
 LIB_OBJS += bulk-checkin.o
@@ -1466,7 +1467,7 @@ GIT-SPATCH-DEFINES: FORCE
 	    if test x"$$FLAGS" != x"`cat GIT-SPATCH-DEFINES 2>/dev/null`" ; then \
 		echo >&2 "    * new spatch flags"; \
 		echo "$$FLAGS" >GIT-SPATCH-DEFINES; \
-            fi
+	    fi
 
 include config.mak.uname
 -include config.mak.autogen
@@ -1601,23 +1602,23 @@ ifneq (,$(SOCKLEN_T))
 endif
 
 ifeq ($(uname_S),Darwin)
-        ifndef NO_FINK
-                ifeq ($(shell test -d /sw/lib && echo y),y)
+	ifndef NO_FINK
+		ifeq ($(shell test -d /sw/lib && echo y),y)
 			BASIC_CFLAGS += -I/sw/include
 			BASIC_LDFLAGS += -L/sw/lib
-                endif
-        endif
-        ifndef NO_DARWIN_PORTS
-                ifeq ($(shell test -d /opt/local/lib && echo y),y)
+		endif
+	endif
+	ifndef NO_DARWIN_PORTS
+		ifeq ($(shell test -d /opt/local/lib && echo y),y)
 			BASIC_CFLAGS += -I/opt/local/include
 			BASIC_LDFLAGS += -L/opt/local/lib
-                endif
-        endif
-        ifndef NO_APPLE_COMMON_CRYPTO
+		endif
+	endif
+	ifndef NO_APPLE_COMMON_CRYPTO
 		NO_OPENSSL = YesPlease
 		APPLE_COMMON_CRYPTO = YesPlease
 		COMPAT_CFLAGS += -DAPPLE_COMMON_CRYPTO
-        endif
+	endif
 	PTHREAD_LIBS =
 endif
 
@@ -1656,23 +1657,23 @@ ifdef NO_CURL
 	REMOTE_CURL_NAMES =
 	EXCLUDED_PROGRAMS += git-http-fetch git-http-push
 else
-        ifdef CURLDIR
+	ifdef CURLDIR
 		# Try "-Wl,-rpath=$(CURLDIR)/$(lib)" in such a case.
 		CURL_CFLAGS = -I$(CURLDIR)/include
 		CURL_LIBCURL = $(call libpath_template,$(CURLDIR)/$(lib))
-        else
+	else
 		CURL_CFLAGS =
 		CURL_LIBCURL =
-        endif
+	endif
 
-        ifndef CURL_LDFLAGS
+	ifndef CURL_LDFLAGS
 		CURL_LDFLAGS = $(eval CURL_LDFLAGS := $$(shell $$(CURL_CONFIG) --libs))$(CURL_LDFLAGS)
-        endif
+	endif
 	CURL_LIBCURL += $(CURL_LDFLAGS)
 
-        ifndef CURL_CFLAGS
+	ifndef CURL_CFLAGS
 		CURL_CFLAGS = $(eval CURL_CFLAGS := $$(shell $$(CURL_CONFIG) --cflags))$(CURL_CFLAGS)
-        endif
+	endif
 	BASIC_CFLAGS += $(CURL_CFLAGS)
 
 	REMOTE_CURL_PRIMARY = git-remote-http$X
@@ -1680,58 +1681,58 @@ else
 	REMOTE_CURL_NAMES = $(REMOTE_CURL_PRIMARY) $(REMOTE_CURL_ALIASES)
 	PROGRAM_OBJS += http-fetch.o
 	PROGRAMS += $(REMOTE_CURL_NAMES)
-        ifndef NO_EXPAT
+	ifndef NO_EXPAT
 		PROGRAM_OBJS += http-push.o
-        endif
+	endif
 	curl_check := $(shell (echo 072200; $(CURL_CONFIG) --vernum | sed -e '/^70[BC]/s/^/0/') 2>/dev/null | sort -r | sed -ne 2p)
-        ifeq "$(curl_check)" "072200"
+	ifeq "$(curl_check)" "072200"
 		USE_CURL_FOR_IMAP_SEND = YesPlease
-        endif
-        ifdef USE_CURL_FOR_IMAP_SEND
+	endif
+	ifdef USE_CURL_FOR_IMAP_SEND
 		BASIC_CFLAGS += -DUSE_CURL_FOR_IMAP_SEND
 		IMAP_SEND_BUILDDEPS = http.o
 		IMAP_SEND_LDFLAGS += $(CURL_LIBCURL)
-        endif
-        ifndef NO_EXPAT
-                ifdef EXPATDIR
+	endif
+	ifndef NO_EXPAT
+		ifdef EXPATDIR
 			BASIC_CFLAGS += -I$(EXPATDIR)/include
 			EXPAT_LIBEXPAT = $(call libpath_template,$(EXPATDIR)/$(lib)) -lexpat
-                else
+		else
 			EXPAT_LIBEXPAT = -lexpat
-                endif
-                ifdef EXPAT_NEEDS_XMLPARSE_H
+		endif
+		ifdef EXPAT_NEEDS_XMLPARSE_H
 			BASIC_CFLAGS += -DEXPAT_NEEDS_XMLPARSE_H
-                endif
-        endif
+		endif
+	endif
 endif
 IMAP_SEND_LDFLAGS += $(OPENSSL_LINK) $(OPENSSL_LIBSSL) $(LIB_4_CRYPTO)
 
 ifdef ZLIB_NG
 	BASIC_CFLAGS += -DHAVE_ZLIB_NG
-        ifdef ZLIB_NG_PATH
+	ifdef ZLIB_NG_PATH
 		BASIC_CFLAGS += -I$(ZLIB_NG_PATH)/include
 		EXTLIBS += $(call libpath_template,$(ZLIB_NG_PATH)/$(lib))
-        endif
+	endif
 	EXTLIBS += -lz-ng
 else
-        ifdef ZLIB_PATH
+	ifdef ZLIB_PATH
 		BASIC_CFLAGS += -I$(ZLIB_PATH)/include
 		EXTLIBS += $(call libpath_template,$(ZLIB_PATH)/$(lib))
-        endif
+	endif
 	EXTLIBS += -lz
 endif
 
 ifndef NO_OPENSSL
 	OPENSSL_LIBSSL = -lssl
-        ifdef OPENSSLDIR
+	ifdef OPENSSLDIR
 		BASIC_CFLAGS += -I$(OPENSSLDIR)/include
 		OPENSSL_LINK = $(call libpath_template,$(OPENSSLDIR)/$(lib))
-        else
+	else
 		OPENSSL_LINK =
-        endif
-        ifdef NEEDS_CRYPTO_WITH_SSL
+	endif
+	ifdef NEEDS_CRYPTO_WITH_SSL
 		OPENSSL_LIBSSL += -lcrypto
-        endif
+	endif
 else
 	BASIC_CFLAGS += -DNO_OPENSSL
 	OPENSSL_LIBSSL =
@@ -1749,18 +1750,18 @@ ifdef APPLE_COMMON_CRYPTO
 endif
 endif
 ifndef NO_ICONV
-        ifdef NEEDS_LIBICONV
-                ifdef ICONVDIR
+	ifdef NEEDS_LIBICONV
+		ifdef ICONVDIR
 			BASIC_CFLAGS += -I$(ICONVDIR)/include
 			ICONV_LINK = $(call libpath_template,$(ICONVDIR)/$(lib))
-                else
+		else
 			ICONV_LINK =
-                endif
-                ifdef NEEDS_LIBINTL_BEFORE_LIBICONV
+		endif
+		ifdef NEEDS_LIBINTL_BEFORE_LIBICONV
 			ICONV_LINK += -lintl
-                endif
+		endif
 		EXTLIBS += $(ICONV_LINK) -liconv
-        endif
+	endif
 endif
 ifdef ICONV_OMITS_BOM
 	BASIC_CFLAGS += -DICONV_OMITS_BOM
@@ -1880,10 +1881,10 @@ ifdef NO_MMAP
 	COMPAT_CFLAGS += -DNO_MMAP
 	COMPAT_OBJS += compat/mmap.o
 else
-        ifdef USE_WIN32_MMAP
+	ifdef USE_WIN32_MMAP
 		COMPAT_CFLAGS += -DUSE_WIN32_MMAP
 		COMPAT_OBJS += compat/win32mmap.o
-        endif
+	endif
 endif
 ifdef MMAP_PREVENTS_DELETE
 	BASIC_CFLAGS += -DMMAP_PREVENTS_DELETE
@@ -2008,11 +2009,11 @@ else
 	BASIC_CFLAGS += -DSHA1_DC
 	LIB_OBJS += sha1dc_git.o
 ifdef DC_SHA1_EXTERNAL
-        ifdef DC_SHA1_SUBMODULE
-                ifneq ($(DC_SHA1_SUBMODULE),auto)
+	ifdef DC_SHA1_SUBMODULE
+		ifneq ($(DC_SHA1_SUBMODULE),auto)
 $(error Only set DC_SHA1_EXTERNAL or DC_SHA1_SUBMODULE, not both)
-                endif
-        endif
+		endif
+	endif
 	BASIC_CFLAGS += -DDC_SHA1_EXTERNAL
 	EXTLIBS += -lsha1detectcoll
 else
@@ -2218,26 +2219,26 @@ endif
 
 ifdef RUNTIME_PREFIX
 
-        ifdef HAVE_BSD_KERN_PROC_SYSCTL
+	ifdef HAVE_BSD_KERN_PROC_SYSCTL
 		BASIC_CFLAGS += -DHAVE_BSD_KERN_PROC_SYSCTL
-        endif
+	endif
 
-        ifneq ($(PROCFS_EXECUTABLE_PATH),)
+	ifneq ($(PROCFS_EXECUTABLE_PATH),)
 		pep_SQ = $(subst ','\'',$(PROCFS_EXECUTABLE_PATH))
 		BASIC_CFLAGS += '-DPROCFS_EXECUTABLE_PATH="$(pep_SQ)"'
-        endif
+	endif
 
-        ifdef HAVE_NS_GET_EXECUTABLE_PATH
+	ifdef HAVE_NS_GET_EXECUTABLE_PATH
 		BASIC_CFLAGS += -DHAVE_NS_GET_EXECUTABLE_PATH
-        endif
+	endif
 
-        ifdef HAVE_ZOS_GET_EXECUTABLE_PATH
+	ifdef HAVE_ZOS_GET_EXECUTABLE_PATH
 		BASIC_CFLAGS += -DHAVE_ZOS_GET_EXECUTABLE_PATH
-        endif
+	endif
 
-        ifdef HAVE_WPGMPTR
+	ifdef HAVE_WPGMPTR
 		BASIC_CFLAGS += -DHAVE_WPGMPTR
-        endif
+	endif
 
 endif
 
@@ -2595,7 +2596,7 @@ GIT-SCRIPT-DEFINES: FORCE
 	    if test x"$$FLAGS" != x"`cat $@ 2>/dev/null`" ; then \
 		echo >&2 "    * new script parameters"; \
 		echo "$$FLAGS" >$@; \
-            fi
+	    fi
 
 $(SCRIPT_SH_GEN) $(SCRIPT_LIB) : % : %.sh generate-script.sh GIT-BUILD-OPTIONS GIT-SCRIPT-DEFINES
 	$(QUIET_GEN)./generate-script.sh "$<" "$@+" ./GIT-BUILD-OPTIONS && \
@@ -2936,7 +2937,7 @@ Documentation/GIT-EXCLUDED-PROGRAMS: FORCE
 		x"`cat Documentation/GIT-EXCLUDED-PROGRAMS 2>/dev/null`" ; then \
 		echo >&2 "    * new documentation flags"; \
 		echo "$$EXCLUDED" >Documentation/GIT-EXCLUDED-PROGRAMS; \
-            fi
+	    fi
 
 .PHONY: doc man man-perl html info pdf
 doc: man-perl
@@ -3172,7 +3173,7 @@ GIT-CFLAGS: FORCE
 	    if test x"$$FLAGS" != x"`cat GIT-CFLAGS 2>/dev/null`" ; then \
 		echo >&2 "    * new build flags"; \
 		echo "$$FLAGS" >GIT-CFLAGS; \
-            fi
+	    fi
 
 TRACK_LDFLAGS = $(subst ','\'',$(ALL_LDFLAGS))
 
@@ -3181,7 +3182,7 @@ GIT-LDFLAGS: FORCE
 	    if test x"$$FLAGS" != x"`cat GIT-LDFLAGS 2>/dev/null`" ; then \
 		echo >&2 "    * new link flags"; \
 		echo "$$FLAGS" >GIT-LDFLAGS; \
-            fi
+	    fi
 
 ifdef RUNTIME_PREFIX
 RUNTIME_PREFIX_OPTION = true
@@ -3256,7 +3257,7 @@ GIT-PYTHON-VARS: FORCE
 	    if test x"$$VARS" != x"`cat $@ 2>/dev/null`" ; then \
 		echo >&2 "    * new Python interpreter location"; \
 		echo "$$VARS" >$@; \
-            fi
+	    fi
 endif
 
 test_bindir_programs := $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
@@ -3927,7 +3928,7 @@ GIT-TEST-SUITES: FORCE
 	    if test x"$$FLAGS" != x"`cat GIT-TEST-SUITES 2>/dev/null`" ; then \
 		echo >&2 "    * new test suites"; \
 		echo "$$FLAGS" >GIT-TEST-SUITES; \
-            fi
+	    fi
 
 $(UNIT_TEST_DIR)/clar-decls.h: $(patsubst %,$(UNIT_TEST_DIR)/%.c,$(CLAR_TEST_SUITES)) $(UNIT_TEST_DIR)/generate-clar-decls.sh GIT-TEST-SUITES
 	$(QUIET_GEN)$(SHELL_PATH) $(UNIT_TEST_DIR)/generate-clar-decls.sh "$@" $(filter %.c,$^)

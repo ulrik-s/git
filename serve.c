@@ -181,6 +181,10 @@ static struct protocol_capability capabilities[] = {
 		.advertise = promisor_remote_advertise,
 		.receive = promisor_remote_receive,
 	},
+       {
+	       .name = "bblob",
+	       .advertise = always_advertise,
+       },
 };
 
 void protocol_v2_advertise_capabilities(struct repository *r)

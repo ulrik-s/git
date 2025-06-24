@@ -1279,6 +1279,7 @@ static void write_v0_ref(struct upload_pack_data *data,
 			     data->no_done ? " no-done" : "",
 			     symref_info.buf,
 			     data->allow_filter ? " filter" : "",
+			     " bblob",
 			     session_id.buf,
 			     the_hash_algo->name,
 			     git_user_agent_sanitized());

@@ -25,6 +25,7 @@
 #include "object-file.h"
 #include "object-name.h"
 #include "object-store.h"
+#include "bblob.h"
 #include "replace-object.h"
 #include "promisor-remote.h"
 #include "mailmap.h"
@@ -149,7 +150,16 @@ static int cat_one_file(int opt, const char *exp_type, const char *obj_name)
 		if (oid_object_info_extended(the_repository, &oid, &oi, flags) < 0)
 			die("git cat-file: could not get object info");
 
-		if (use_mailmap && (type == OBJ_COMMIT || type == OBJ_TAG)) {
+		if (!oi.typep) {
+			struct object_info ti = OBJECT_INFO_INIT;
+			ti.typep = &type;
+			if (oid_object_info_extended(the_repository, &oid, &ti, flags) < 0)
+				die("git cat-file: could not get object info");
+		}
+
+		if (type == OBJ_BBLOB)
+			size = bblob_size(the_repository, &oid);
+		else if (use_mailmap && (type == OBJ_COMMIT || type == OBJ_TAG)) {
 			size_t s = size;
 			buf = replace_idents_using_mailmap(buf, &s);
 			size = cast_size_t_to_ulong(s);

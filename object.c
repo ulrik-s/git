@@ -7,6 +7,7 @@
 #include "replace-object.h"
 #include "object-file.h"
 #include "blob.h"
+#include "bblob.h"
 #include "statinfo.h"
 #include "tree.h"
 #include "commit.h"
@@ -31,6 +32,7 @@ static const char *object_type_strings[] = {
 	"tree",		/* OBJ_TREE = 2 */
 	"blob",		/* OBJ_BLOB = 3 */
 	"tag",		/* OBJ_TAG = 4 */
+	"bblob",        /* OBJ_BBLOB = 5 */
 };
 
 const char *type_name(unsigned int type)
@@ -193,18 +195,20 @@ struct object *lookup_object_by_type(struct repository *r,
 			    const struct object_id *oid,
 			    enum object_type type)
 {
-	switch (type) {
-	case OBJ_COMMIT:
-		return (struct object *)lookup_commit(r, oid);
-	case OBJ_TREE:
-		return (struct object *)lookup_tree(r, oid);
-	case OBJ_TAG:
-		return (struct object *)lookup_tag(r, oid);
-	case OBJ_BLOB:
-		return (struct object *)lookup_blob(r, oid);
-	default:
-		BUG("unknown object type %d", type);
-	}
+	   switch (type) {
+	   case OBJ_COMMIT:
+	       return (struct object *)lookup_commit(r, oid);
+	   case OBJ_TREE:
+	       return (struct object *)lookup_tree(r, oid);
+	   case OBJ_TAG:
+	       return (struct object *)lookup_tag(r, oid);
+	   case OBJ_BLOB:
+	       return (struct object *)lookup_blob(r, oid);
+	   case OBJ_BBLOB:
+	       return (struct object *)lookup_bblob(r, oid);
+	   default:
+	       BUG("unknown object type %d", type);
+	   }
 }
 
 enum peel_status peel_object(struct repository *r,
@@ -236,12 +240,20 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id 
 	*eaten_p = 0;
 
 	obj = NULL;
-	if (type == OBJ_BLOB) {
-		struct blob *blob = lookup_blob(r, oid);
-		if (blob) {
-			parse_blob_buffer(blob);
-			obj = &blob->object;
-		}
+	   if (type == OBJ_BLOB || type == OBJ_BBLOB) {
+	       if (type == OBJ_BLOB) {
+		       struct blob *blob = lookup_blob(r, oid);
+		       if (blob) {
+			       parse_blob_buffer(blob);
+			       obj = &blob->object;
+		       }
+	       } else {
+		       struct bblob *bb = lookup_bblob(r, oid);
+		       if (bb) {
+			       parse_bblob_buffer(bb);
+			       obj = &bb->object;
+		       }
+	       }
 	} else if (type == OBJ_TREE) {
 		struct tree *tree = lookup_tree(r, oid);
 		if (tree) {
@@ -314,14 +326,18 @@ struct object *parse_object_with_flags(struct repository *r,
 			return &commit->object;
 	}
 
-	if ((!obj || obj->type == OBJ_BLOB) &&
-	    oid_object_info(r, oid, NULL) == OBJ_BLOB) {
-		if (!skip_hash && stream_object_signature(r, repl) < 0) {
-			error(_("hash mismatch %s"), oid_to_hex(oid));
-			return NULL;
-		}
-		parse_blob_buffer(lookup_blob(r, oid));
-		return lookup_object(r, oid);
+	   if ((!obj || obj->type == OBJ_BLOB || obj->type == OBJ_BBLOB) &&
+	   (oid_object_info(r, oid, NULL) == OBJ_BLOB ||
+	    oid_object_info(r, oid, NULL) == OBJ_BBLOB)) {
+	       if (!skip_hash && stream_object_signature(r, repl) < 0) {
+		       error(_("hash mismatch %s"), oid_to_hex(oid));
+		       return NULL;
+	       }
+	       if (oid_object_info(r, oid, NULL) == OBJ_BLOB)
+		       parse_blob_buffer(lookup_blob(r, oid));
+	       else
+		       parse_bblob_buffer(lookup_bblob(r, oid));
+	       return lookup_object(r, oid);
 	}
 
 	/*
