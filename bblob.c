@@ -9,7 +9,6 @@
 
 extern int disable_bblob_conversion;
 
-const char *bblob_type = "bblob";
 
 struct bblob *lookup_bblob(struct repository *r, const struct object_id *oid)
 {
