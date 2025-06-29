@@ -35,7 +35,11 @@ test_expect_success 'setup to generate files with expected content' '
 '
 
 test_expect_success 'test capability advertisement' '
-	cat expect.base expect.trailer >expect &&
+       {
+               cat expect.base &&
+               echo bblob &&
+               cat expect.trailer
+       } >expect &&
 
 	if test_have_prereq WINDOWS
 	then
@@ -369,10 +373,11 @@ test_expect_success 'test capability advertisement with uploadpack.advertiseBund
 
 	cat >expect.extra <<-EOF &&
 	bundle-uri
+	bblob
 	EOF
 	cat expect.base \
-	    expect.extra \
-	    expect.trailer >expect &&
+            expect.extra \
+            expect.trailer >expect &&
 
 	if test_have_prereq WINDOWS
 	then
