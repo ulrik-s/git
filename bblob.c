@@ -7,8 +7,6 @@
 #include "object-store.h"
 #include "streaming.h"
 
-extern int disable_bblob_conversion;
-
 
 struct bblob *lookup_bblob(struct repository *r, const struct object_id *oid)
 {
@@ -39,9 +37,7 @@ static int write_bblob_tree(struct repository *r, struct object_id *oids,
                for (i = 0; i < nr; i++)
                        memcpy((char *)raw + i * oidsz, oids[i].hash, oidsz);
 
-               disable_bblob_conversion++;
                ret = write_object_file(raw, rawlen, OBJ_BBLOB, oid);
-               disable_bblob_conversion--;
                free(raw);
                return ret;
        }
@@ -86,15 +82,12 @@ int write_bblob(struct repository *r, const void *buf, unsigned long len,
                                out[r->hash_algo->rawsz - 1];
 		       if ((bits & 0x1fff) == 0) {
                                struct object_id ch;
-			       disable_bblob_conversion++;
-			       if (write_object_file((const char *)buf + chunk_start,
-						    i - chunk_start + 1,
-						    OBJ_BLOB, &ch)) {
-				       disable_bblob_conversion--;
-				       free(oids);
-				       return -1;
-			       }
-			       disable_bblob_conversion--;
+                               if (write_object_file((const char *)buf + chunk_start,
+                                                    i - chunk_start + 1,
+                                                    OBJ_BLOB, &ch)) {
+                                       free(oids);
+                                       return -1;
+                               }
 			       ALLOC_GROW(oids, oids_nr + 1, oids_alloc);
 			       oidcpy(&oids[oids_nr++], &ch);
 			       chunk_start = i + 1;
@@ -104,15 +97,12 @@ int write_bblob(struct repository *r, const void *buf, unsigned long len,
        }
        if (chunk_start < len) {
 	       struct object_id ch;
-	       disable_bblob_conversion++;
-	       if (write_object_file((const char *)buf + chunk_start,
-				    len - chunk_start,
-				    OBJ_BLOB, &ch)) {
-		       disable_bblob_conversion--;
-		       free(oids);
-		       return -1;
-	       }
-	       disable_bblob_conversion--;
+               if (write_object_file((const char *)buf + chunk_start,
+                                    len - chunk_start,
+                                    OBJ_BLOB, &ch)) {
+                       free(oids);
+                       return -1;
+               }
 	       ALLOC_GROW(oids, oids_nr + 1, oids_alloc);
 	       oidcpy(&oids[oids_nr++], &ch);
        }

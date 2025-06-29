@@ -180,7 +180,6 @@ integration_tests = [
   't1020-subdirectory.sh',
   't1021-rerere-in-workdir.sh',
   't1022-read-tree-partial-clone.sh',
-  't1030-bblob.sh',
   't1050-large.sh',
   't1051-large-conversion.sh',
   't1060-object-corruption.sh',

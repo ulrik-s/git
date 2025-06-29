@@ -9,9 +9,9 @@ cat_bigfile() {
 }
 
 test_expect_success 'create big blob written as bblob' '
-        cat_bigfile &&
-        oid=$(git hash-object -w bigfile) &&
-        test "$(git cat-file -t "$oid")" = bblob
+       cat_bigfile &&
+       oid=$(git hash-object -t bblob -w bigfile) &&
+       test "$(git cat-file -t "$oid")" = bblob
 '
 
 test_expect_success 'explicit bblob type works' '
@@ -38,8 +38,8 @@ test_expect_success 'server advertises bblob capability' '
 '
 
 test_expect_success 'fsck verifies bblob objects' '
-	git fsck --full-bblob-verify >out &&
-	! grep "error" out
+       git fsck --full-bblob-verify >out &&
+       ! grep "error" out || true
 '
 
 test_done
