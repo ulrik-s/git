@@ -39,7 +39,7 @@ test_expect_success 'server advertises bblob capability' '
 
 test_expect_success 'fsck verifies bblob objects' '
        git fsck --full-bblob-verify >out &&
-       ! grep "error" out || true
+       ! grep "error" out
 '
 
 test_done
