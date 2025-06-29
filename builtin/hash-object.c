@@ -13,23 +13,36 @@
 #include "object-file.h"
 #include "object-store.h"
 #include "blob.h"
+#include "bblob.h"
 #include "quote.h"
 #include "parse-options.h"
 #include "setup.h"
 #include "strbuf.h"
 #include "write-or-die.h"
+#include "wrapper.h"
 
 static void hash_fd(int fd, const char *type, const char *path, unsigned flags)
 {
 	struct stat st;
 	struct object_id oid;
 
-	if (fstat(fd, &st) < 0 ||
-	    index_fd(the_repository->index, &oid, fd, &st,
-		     type_from_string(type), path, flags))
-		die((flags & INDEX_WRITE_OBJECT)
-		    ? "Unable to add %s to database"
-		    : "Unable to hash %s", path);
+    if (fstat(fd, &st) < 0)
+            die_errno("unable to stat %s", path);
+
+    if (!strcmp(type, "bblob")) {
+            void *buf = xmalloc(st.st_size);
+            if (read_in_full(fd, buf, st.st_size) != st.st_size)
+                    die_errno("unable to read %s", path);
+            if (write_bblob(the_repository, buf, st.st_size, &oid))
+                    die("unable to write bblob for %s", path);
+            free(buf);
+            close(fd);
+    } else if (index_fd(the_repository->index, &oid, fd, &st,
+                        type_from_string(type), path, flags))
+            die((flags & INDEX_WRITE_OBJECT)
+                ? "Unable to add %s to database"
+                : "Unable to hash %s", path);
+
 	printf("%s\n", oid_to_hex(&oid));
 	maybe_flush_or_die(stdout, "hash to stdout");
 }
