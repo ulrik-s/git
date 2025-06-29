@@ -1080,13 +1080,15 @@ int write_object_file_flags(const void *buf, unsigned long len,
 	       }
        }
 
-       if (!disable_bblob_conversion && type == OBJ_BLOB && len > BBLOB_CHUNK_GOAL) {
-	       if (write_bblob(repo, buf, len, oid))
-		       return -1;
-	       type = OBJ_BBLOB;
-	       if (compat)
-		       return repo_add_loose_object_map(repo, oid, &compat_oid);
-	       return 0;
+       if (!disable_bblob_conversion &&
+           (type == OBJ_BLOB || type == OBJ_BBLOB) &&
+           (type == OBJ_BBLOB || len > BBLOB_CHUNK_GOAL)) {
+               if (write_bblob(repo, buf, len, oid))
+                       return -1;
+               type = OBJ_BBLOB;
+               if (compat)
+                       return repo_add_loose_object_map(repo, oid, &compat_oid);
+               return 0;
        }
 
 	/* Normally if we have it in the pack then we do not bother writing

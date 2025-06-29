@@ -95,8 +95,11 @@ int cmd_hash_object(int argc,
 	int i;
 	const char *errstr = NULL;
 
-	argc = parse_options(argc, argv, prefix, hash_object_options,
-			     hash_object_usage, 0);
+       argc = parse_options(argc, argv, prefix, hash_object_options,
+                            hash_object_usage, 0);
+
+       if (!strcmp(type, "bblob"))
+               flags &= ~INDEX_FORMAT_CHECK;
 
 	if (flags & INDEX_WRITE_OBJECT)
 		prefix = setup_git_directory();

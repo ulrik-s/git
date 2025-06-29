@@ -9,9 +9,17 @@ cat_bigfile() {
 }
 
 test_expect_success 'create big blob written as bblob' '
-	cat_bigfile &&
-	oid=$(git hash-object -w bigfile) &&
-	test "$(git cat-file -t "$oid")" = bblob
+        cat_bigfile &&
+        oid=$(git hash-object -w bigfile) &&
+        test "$(git cat-file -t "$oid")" = bblob
+'
+
+test_expect_success 'explicit bblob type works' '
+       echo small >small &&
+       soid=$(git hash-object -t bblob -w small) &&
+       test "$(git cat-file -t "$soid")" = bblob &&
+       git cat-file -p "$soid" >actual &&
+       test_cmp small actual
 '
 
 test_expect_success 'reading bblob yields original data' '

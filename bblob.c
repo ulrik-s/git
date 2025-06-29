@@ -39,7 +39,9 @@ static int write_bblob_tree(struct repository *r, struct object_id *oids,
                for (i = 0; i < nr; i++)
                        memcpy((char *)raw + i * oidsz, oids[i].hash, oidsz);
 
+               disable_bblob_conversion++;
                ret = write_object_file(raw, rawlen, OBJ_BBLOB, oid);
+               disable_bblob_conversion--;
                free(raw);
                return ret;
        }
