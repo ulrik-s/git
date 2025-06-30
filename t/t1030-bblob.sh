@@ -28,7 +28,7 @@ test_expect_success 'reading bblob yields original data' '
 '
 
 test_expect_success 'size helper matches original' '
-	test "$(git cat-file -s "$oid")" = "$(wc -c <bigfile)"
+       test $(git cat-file -s "$oid") -eq $(wc -c <bigfile)
 '
 
 test_expect_success 'server advertises bblob capability' '
