@@ -1259,9 +1259,9 @@ static int fsck_bblob(const struct object_id *oid, const char *buf,
            size_t oidsz = the_repository->hash_algo->rawsz;
            int i;
 
-	   if (size != oidsz * BBLOB_FANOUT)
-	       ret |= report(options, oid, OBJ_BBLOB, FSCK_MSG_BAD_TYPE,
-			      "invalid bblob size");
+       if (size % oidsz || size / oidsz > BBLOB_FANOUT)
+               ret |= report(options, oid, OBJ_BBLOB, FSCK_MSG_BAD_TYPE,
+                              "invalid bblob size");
 
            for (i = 0; i < BBLOB_FANOUT && i * oidsz < size; i++) {
                struct object_id child;
