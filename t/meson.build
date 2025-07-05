@@ -727,6 +727,7 @@ integration_tests = [
   't5620-backfill.sh',
   't5621-clone-revision.sh',
   't5622-fetch-no-dup.sh',
+  't5623-bblob-smart-transfer.sh',
   't5700-protocol-v1.sh',
   't5701-git-serve.sh',
   't5702-protocol-v2.sh',
