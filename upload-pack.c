@@ -119,6 +119,7 @@ struct upload_pack_data {
 	unsigned allow_sideband_all : 1;			/* v2 only */
 	unsigned seen_haves : 1;				/* v2 only */
 	unsigned allow_packfile_uris : 1;			/* v2 only */
+	unsigned allow_bblob : 1;				/* v2 only */
 	unsigned advertise_sid : 1;
 	unsigned sent_capabilities : 1;
 };
@@ -154,6 +155,7 @@ static void upload_pack_data_init(struct upload_pack_data *data)
 
 	data->keepalive = 5;
 	data->advertise_sid = 0;
+	data->allow_bblob = 0;
 }
 
 static void upload_pack_data_clear(struct upload_pack_data *data)
@@ -1682,14 +1684,19 @@ static void process_args(struct packet_reader *request,
 			continue;
 		}
 
-		if (data->allow_packfile_uris &&
-		    skip_prefix(arg, "packfile-uris ", &p)) {
-			if (data->uri_protocols.nr)
-				send_err_and_die(data,
-						 "multiple packfile-uris lines forbidden");
-			string_list_split(&data->uri_protocols, p, ',', -1);
-			continue;
-		}
+               if (data->allow_packfile_uris &&
+                   skip_prefix(arg, "packfile-uris ", &p)) {
+                       if (data->uri_protocols.nr)
+                               send_err_and_die(data,
+                                                "multiple packfile-uris lines forbidden");
+                       string_list_split(&data->uri_protocols, p, ',', -1);
+                       continue;
+               }
+
+               if (!strcmp(arg, "bblob")) {
+                       data->allow_bblob = 1;
+                       continue;
+               }
 
 		/* ignore unknown lines maybe? */
 		die("unexpected line: '%s'", arg);
