@@ -30,6 +30,10 @@
 #include "setup.h"
 #include "streaming.h"
 
+/* automatically convert large blobs to bblobs when writing */
+static int auto_bblob = 1;
+static int writing_bblob;
+
 /* The maximum size for an object header. */
 #define MAX_HEADER_LEN 32
 
@@ -1059,9 +1063,29 @@ int write_object_file_flags(const void *buf, unsigned long len,
 	struct repository *repo = the_repository;
 	const struct git_hash_algo *algo = repo->hash_algo;
 	const struct git_hash_algo *compat = repo->compat_hash_algo;
-	struct object_id compat_oid;
-	char hdr[MAX_HEADER_LEN];
-	int hdrlen = sizeof(hdr);
+       struct object_id compat_oid;
+       char hdr[MAX_HEADER_LEN];
+       int hdrlen = sizeof(hdr);
+
+       if (type == OBJ_BLOB && auto_bblob && !writing_bblob &&
+           len > BBLOB_CHUNK_GOAL) {
+               struct object_id bb;
+               writing_bblob = 1;
+               if (write_bblob(repo, buf, len, &bb)) {
+                       writing_bblob = 0;
+                       return -1;
+               }
+               writing_bblob = 0;
+               oidcpy(oid, &bb);
+               if (compat) {
+                       if (compat_oid_in)
+                               oidcpy(&compat_oid, compat_oid_in);
+                       else
+                               hash_object_file(compat, buf, len, OBJ_BLOB, &compat_oid);
+                       return repo_add_loose_object_map(repo, oid, &compat_oid);
+               }
+               return 0;
+       }
 
        /* Generate compat_oid */
        if (compat) {
