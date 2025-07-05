@@ -174,35 +174,40 @@ struct fsck_options {
 	struct oidset gitmodules_done;
 	struct oidset gitattributes_found;
 	struct oidset gitattributes_done;
-	kh_oid_map_t *object_names;
+       kh_oid_map_t *object_names;
+       int full_bblob_verify;
 };
 
 #define FSCK_OPTIONS_DEFAULT { \
-	.skip_oids = OIDSET_INIT, \
-	.gitmodules_found = OIDSET_INIT, \
-	.gitmodules_done = OIDSET_INIT, \
-	.gitattributes_found = OIDSET_INIT, \
-	.gitattributes_done = OIDSET_INIT, \
-	.error_func = fsck_objects_error_function \
+    .skip_oids = OIDSET_INIT, \
+    .gitmodules_found = OIDSET_INIT, \
+    .gitmodules_done = OIDSET_INIT, \
+    .gitattributes_found = OIDSET_INIT, \
+    .gitattributes_done = OIDSET_INIT, \
+    .error_func = fsck_objects_error_function, \
+    .full_bblob_verify = 0 \
 }
 #define FSCK_OPTIONS_STRICT { \
-	.strict = 1, \
-	.gitmodules_found = OIDSET_INIT, \
-	.gitmodules_done = OIDSET_INIT, \
-	.gitattributes_found = OIDSET_INIT, \
-	.gitattributes_done = OIDSET_INIT, \
-	.error_func = fsck_objects_error_function, \
+    .strict = 1, \
+    .gitmodules_found = OIDSET_INIT, \
+    .gitmodules_done = OIDSET_INIT, \
+    .gitattributes_found = OIDSET_INIT, \
+    .gitattributes_done = OIDSET_INIT, \
+    .error_func = fsck_objects_error_function, \
+    .full_bblob_verify = 0, \
 }
 #define FSCK_OPTIONS_MISSING_GITMODULES { \
-	.strict = 1, \
-	.gitmodules_found = OIDSET_INIT, \
-	.gitmodules_done = OIDSET_INIT, \
-	.gitattributes_found = OIDSET_INIT, \
-	.gitattributes_done = OIDSET_INIT, \
-	.error_func = fsck_objects_error_cb_print_missing_gitmodules, \
+    .strict = 1, \
+    .gitmodules_found = OIDSET_INIT, \
+    .gitmodules_done = OIDSET_INIT, \
+    .gitattributes_found = OIDSET_INIT, \
+    .gitattributes_done = OIDSET_INIT, \
+    .error_func = fsck_objects_error_cb_print_missing_gitmodules, \
+    .full_bblob_verify = 0, \
 }
 #define FSCK_REFS_OPTIONS_DEFAULT { \
-	.error_func = fsck_refs_error_function, \
+    .error_func = fsck_refs_error_function, \
+    .full_bblob_verify = 0, \
 }
 
 /* descend in all linked child objects

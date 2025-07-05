@@ -21,6 +21,7 @@
 #include "loose.h"
 #include "object-file-convert.h"
 #include "object-file.h"
+#include "bblob.h"
 #include "object-store.h"
 #include "oidtree.h"
 #include "pack.h"
@@ -28,6 +29,10 @@
 #include "path.h"
 #include "setup.h"
 #include "streaming.h"
+
+/* automatically convert large blobs to bblobs when writing */
+static int auto_bblob = 1;
+static int writing_bblob;
 
 /* The maximum size for an object header. */
 #define MAX_HEADER_LEN 32
@@ -774,8 +779,8 @@ static int start_loose_object_common(struct strbuf *tmp_file,
 				     char *hdr, int hdrlen)
 {
 	struct repository *repo = the_repository;
-	const struct git_hash_algo *algo = repo->hash_algo;
-	const struct git_hash_algo *compat = repo->compat_hash_algo;
+       const struct git_hash_algo *algo = repo->hash_algo;
+       const struct git_hash_algo *compat = repo->compat_hash_algo;
 	int fd;
 
 	fd = create_tmpfile(tmp_file, filename);
@@ -1050,32 +1055,55 @@ cleanup:
 	return err;
 }
 
+
 int write_object_file_flags(const void *buf, unsigned long len,
-			    enum object_type type, struct object_id *oid,
-			    struct object_id *compat_oid_in, unsigned flags)
+			   enum object_type type, struct object_id *oid,
+			   struct object_id *compat_oid_in, unsigned flags)
 {
 	struct repository *repo = the_repository;
 	const struct git_hash_algo *algo = repo->hash_algo;
 	const struct git_hash_algo *compat = repo->compat_hash_algo;
-	struct object_id compat_oid;
-	char hdr[MAX_HEADER_LEN];
-	int hdrlen = sizeof(hdr);
+       struct object_id compat_oid;
+       char hdr[MAX_HEADER_LEN];
+       int hdrlen = sizeof(hdr);
 
-	/* Generate compat_oid */
-	if (compat) {
-		if (compat_oid_in)
-			oidcpy(&compat_oid, compat_oid_in);
-		else if (type == OBJ_BLOB)
-			hash_object_file(compat, buf, len, type, &compat_oid);
-		else {
-			struct strbuf converted = STRBUF_INIT;
-			convert_object_file(the_repository, &converted, algo, compat,
+       if (type == OBJ_BLOB && auto_bblob && !writing_bblob &&
+           len > BBLOB_CHUNK_GOAL) {
+               struct object_id bb;
+               writing_bblob = 1;
+               if (write_bblob(repo, buf, len, &bb)) {
+                       writing_bblob = 0;
+                       return -1;
+               }
+               writing_bblob = 0;
+               oidcpy(oid, &bb);
+               if (compat) {
+                       if (compat_oid_in)
+                               oidcpy(&compat_oid, compat_oid_in);
+                       else
+                               hash_object_file(compat, buf, len, OBJ_BLOB, &compat_oid);
+                       return repo_add_loose_object_map(repo, oid, &compat_oid);
+               }
+               return 0;
+       }
+
+       /* Generate compat_oid */
+       if (compat) {
+	       if (compat_oid_in)
+		       oidcpy(&compat_oid, compat_oid_in);
+	       else if (type == OBJ_BLOB)
+		       hash_object_file(compat, buf, len, OBJ_BLOB, &compat_oid);
+	       else {
+		       struct strbuf converted = STRBUF_INIT;
+		       convert_object_file(the_repository, &converted, algo, compat,
 					    buf, len, type, 0);
-			hash_object_file(compat, converted.buf, converted.len,
-					 type, &compat_oid);
-			strbuf_release(&converted);
-		}
-	}
+		       hash_object_file(compat, converted.buf, converted.len,
+					type, &compat_oid);
+		       strbuf_release(&converted);
+	       }
+       }
+
+
 
 	/* Normally if we have it in the pack then we do not bother writing
 	 * it out into .git/objects/??/?{38} file.

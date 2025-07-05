@@ -13,6 +13,7 @@
 #include "loose.h"
 #include "object-file-convert.h"
 #include "object-file.h"
+#include "bblob.h"
 #include "object-store.h"
 #include "packfile.h"
 #include "path.h"
@@ -859,22 +860,40 @@ int pretend_object_file(struct repository *repo,
  * deal with them should arrange to call oid_object_info_extended() and give
  * error messages themselves.
  */
-void *repo_read_object_file(struct repository *r,
-			    const struct object_id *oid,
-			    enum object_type *type,
-			    unsigned long *size)
+void *repo_read_raw_object_file(struct repository *r,
+			       const struct object_id *oid,
+			       enum object_type *type,
+			       unsigned long *size)
 {
 	struct object_info oi = OBJECT_INFO_INIT;
 	unsigned flags = OBJECT_INFO_DIE_IF_CORRUPT | OBJECT_INFO_LOOKUP_REPLACE;
 	void *data;
 
 	oi.typep = type;
-	oi.sizep = size;
-	oi.contentp = &data;
-	if (oid_object_info_extended(r, oid, &oi, flags))
-		return NULL;
+	   oi.sizep = size;
+	   oi.contentp = &data;
+	   if (oid_object_info_extended(r, oid, &oi, flags))
+	       return NULL;
 
-	return data;
+	   return data;
+}
+
+void *repo_read_object_file(struct repository *r,
+			    const struct object_id *oid,
+			    enum object_type *type,
+			    unsigned long *size)
+{
+	   void *data = repo_read_raw_object_file(r, oid, type, size);
+
+	   if (data && *type == OBJ_BBLOB) {
+	       void *out = read_bblob(r, oid, size);
+	       free(data);
+	       if (out)
+		       *type = OBJ_BLOB;
+	       return out;
+	   }
+
+	   return data;
 }
 
 void *read_object_with_reference(struct repository *r,

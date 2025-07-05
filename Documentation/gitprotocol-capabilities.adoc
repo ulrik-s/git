@@ -378,6 +378,14 @@ fetch-pack may send "filter" commands to request a partial clone
 or partial fetch and request that the server omit various objects
 from the packfile.
 
+bblob
+-----
+
+If the upload-pack server advertises the 'bblob' capability, it may
+send packfiles containing bblob objects. Clients that do not
+understand this object type must refrain from requesting the
+capability.
+
 session-id=<session-id>
 -----------------------
 

@@ -119,6 +119,7 @@ struct upload_pack_data {
 	unsigned allow_sideband_all : 1;			/* v2 only */
 	unsigned seen_haves : 1;				/* v2 only */
 	unsigned allow_packfile_uris : 1;			/* v2 only */
+	unsigned allow_bblob : 1;				/* v2 only */
 	unsigned advertise_sid : 1;
 	unsigned sent_capabilities : 1;
 };
@@ -154,6 +155,7 @@ static void upload_pack_data_init(struct upload_pack_data *data)
 
 	data->keepalive = 5;
 	data->advertise_sid = 0;
+	data->allow_bblob = 0;
 }
 
 static void upload_pack_data_clear(struct upload_pack_data *data)
@@ -1269,19 +1271,21 @@ static void write_v0_ref(struct upload_pack_data *data,
 
 		format_symref_info(&symref_info, &data->symref);
 		format_session_id(&session_id, data);
-		packet_fwrite_fmt(stdout, "%s %s%c%s%s%s%s%s%s%s object-format=%s agent=%s\n",
-			     oid_to_hex(oid), refname_nons,
-			     0, capabilities,
-			     (data->allow_uor & ALLOW_TIP_SHA1) ?
-				     " allow-tip-sha1-in-want" : "",
-			     (data->allow_uor & ALLOW_REACHABLE_SHA1) ?
-				     " allow-reachable-sha1-in-want" : "",
-			     data->no_done ? " no-done" : "",
-			     symref_info.buf,
-			     data->allow_filter ? " filter" : "",
-			     session_id.buf,
-			     the_hash_algo->name,
-			     git_user_agent_sanitized());
+		packet_fwrite_fmt(stdout,
+			"%s %s%c%s%s%s%s%s%s%s%s object-format=%s agent=%s\n",
+			oid_to_hex(oid), refname_nons,
+			0, capabilities,
+			(data->allow_uor & ALLOW_TIP_SHA1) ?
+			" allow-tip-sha1-in-want" : "",
+			(data->allow_uor & ALLOW_REACHABLE_SHA1) ?
+			" allow-reachable-sha1-in-want" : "",
+			data->no_done ? " no-done" : "",
+			symref_info.buf,
+			data->allow_filter ? " filter" : "",
+			" bblob",
+			session_id.buf,
+			the_hash_algo->name,
+			git_user_agent_sanitized());
 		strbuf_release(&symref_info);
 		strbuf_release(&session_id);
 		data->sent_capabilities = 1;
@@ -1680,14 +1684,19 @@ static void process_args(struct packet_reader *request,
 			continue;
 		}
 
-		if (data->allow_packfile_uris &&
-		    skip_prefix(arg, "packfile-uris ", &p)) {
-			if (data->uri_protocols.nr)
-				send_err_and_die(data,
-						 "multiple packfile-uris lines forbidden");
-			string_list_split(&data->uri_protocols, p, ',', -1);
-			continue;
-		}
+               if (data->allow_packfile_uris &&
+                   skip_prefix(arg, "packfile-uris ", &p)) {
+                       if (data->uri_protocols.nr)
+                               send_err_and_die(data,
+                                                "multiple packfile-uris lines forbidden");
+                       string_list_split(&data->uri_protocols, p, ',', -1);
+                       continue;
+               }
+
+               if (!strcmp(arg, "bblob")) {
+                       data->allow_bblob = 1;
+                       continue;
+               }
 
 		/* ignore unknown lines maybe? */
 		die("unexpected line: '%s'", arg);

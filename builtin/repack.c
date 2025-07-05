@@ -18,6 +18,8 @@
 #include "packfile.h"
 #include "prune-packed.h"
 #include "object-store.h"
+#include "object-file.h"
+#include "bblob.h"
 #include "promisor-remote.h"
 #include "shallow.h"
 #include "pack.h"
@@ -38,7 +40,35 @@ static int pack_kept_objects = -1;
 static int write_bitmaps = -1;
 static int use_delta_islands;
 static int run_update_server_info = 1;
+static int convert_to_bblob;
 static char *packdir, *packtmp_name, *packtmp;
+
+static int convert_one_loose(const struct object_id *oid, const char *path,
+                    void *data)
+{
+       enum object_type type;
+       unsigned long size;
+       void *buf;
+
+       /* avoid unused parameter warnings */
+       (void)path;
+       (void)data;
+
+       buf = repo_read_object_file(the_repository, oid, &type, &size);
+       if (!buf)
+               return 0;
+       if (type == OBJ_BLOB) {
+               struct object_id new_oid;
+               write_bblob(the_repository, buf, size, &new_oid);
+       }
+       free(buf);
+       return 0;
+}
+
+static void convert_all_blobs_to_bblob(void)
+{
+	   for_each_loose_object(convert_one_loose, NULL, 0);
+}
 
 static const char *const git_repack_usage[] = {
 	N_("git repack [-a] [-A] [-d] [-f] [-F] [-l] [-n] [-q] [-b] [-m]\n"
@@ -1207,9 +1237,11 @@ int cmd_repack(int argc,
 				N_("limits the maximum number of threads")),
 		OPT_UNSIGNED(0, "max-pack-size", &po_args.max_pack_size,
 			     N_("maximum size of each packfile")),
-		OPT_PARSE_LIST_OBJECTS_FILTER(&po_args.filter_options),
-		OPT_BOOL(0, "pack-kept-objects", &pack_kept_objects,
-				N_("repack objects in packs marked with .keep")),
+	       OPT_PARSE_LIST_OBJECTS_FILTER(&po_args.filter_options),
+	       OPT_BOOL(0, "convert-to-bblob", &convert_to_bblob,
+			       N_("rewrite all blobs as bblobs")),
+	       OPT_BOOL(0, "pack-kept-objects", &pack_kept_objects,
+			       N_("repack objects in packs marked with .keep")),
 		OPT_STRING_LIST(0, "keep-pack", &keep_pack_list, N_("name"),
 				N_("do not repack this pack")),
 		OPT_INTEGER('g', "geometric", &geometry.split_factor,
@@ -1232,8 +1264,11 @@ int cmd_repack(int argc,
 
 	po_args.window = xstrdup_or_null(opt_window);
 	po_args.window_memory = xstrdup_or_null(opt_window_memory);
-	po_args.depth = xstrdup_or_null(opt_depth);
-	po_args.threads = xstrdup_or_null(opt_threads);
+	   po_args.depth = xstrdup_or_null(opt_depth);
+	   po_args.threads = xstrdup_or_null(opt_threads);
+
+	   if (convert_to_bblob)
+	       convert_all_blobs_to_bblob();
 
 	if (delete_redundant && repository_format_precious_objects)
 		die(_("cannot delete packs in a precious-objects repo"));

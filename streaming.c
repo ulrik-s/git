@@ -11,6 +11,7 @@
 #include "repository.h"
 #include "object-file.h"
 #include "object-store.h"
+#include "bblob.h"
 #include "replace-object.h"
 #include "packfile.h"
 
@@ -43,7 +44,7 @@ struct git_istream {
 	enum { z_unused, z_used, z_done, z_error } z_state;
 
 	union {
-		struct {
+						struct {
 			char *buf; /* from oid_object_info_extended() */
 			unsigned long read_ptr;
 		} incore;
@@ -61,7 +62,14 @@ struct git_istream {
 			off_t pos;
 		} in_pack;
 
-		struct filtered_istream filtered;
+				struct filtered_istream filtered;
+struct {
+		       struct object_id oids[BBLOB_FANOUT];
+			int nr;
+			int idx;
+			struct git_istream *sub;
+			void *raw;
+		} bblob;
 	} u;
 };
 
@@ -407,6 +415,25 @@ static int open_istream_incore(struct git_istream *st, struct repository *r,
 					OBJECT_INFO_DIE_IF_CORRUPT);
 }
 
+static int open_istream_bblob(struct git_istream *st, struct repository *r,
+			      const struct object_id *oid, enum object_type *type)
+{
+	   unsigned long raw_sz;
+	   void *raw = read_bblob(r, oid, &raw_sz); /* this already expands */
+	   if (!raw)
+	       return -1;
+	   st->u.incore.buf = raw;
+	   st->u.incore.read_ptr = 0;
+	   st->size = raw_sz;
+	   st->close = close_istream_incore;
+	   st->read = read_istream_incore;
+	   *type = OBJ_BLOB;
+	   return 0;
+}
+
+
+
+
 /*****************************************************************************
  * static helpers variables and functions for users of streaming interface
  *****************************************************************************/
@@ -469,7 +496,9 @@ struct git_istream *open_istream(struct repository *r,
 {
 	struct git_istream *st = xmalloc(sizeof(*st));
 	const struct object_id *real = lookup_replace_object(r, oid);
-	int ret = istream_source(st, r, real, type);
+	   int ret = istream_source(st, r, real, type);
+	   if (!ret && *type == OBJ_BBLOB)
+	       st->open = open_istream_bblob;
 
 	if (ret) {
 		free(st);

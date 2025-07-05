@@ -180,6 +180,7 @@ integration_tests = [
   't1020-subdirectory.sh',
   't1021-rerere-in-workdir.sh',
   't1022-read-tree-partial-clone.sh',
+  't1030-bblob.sh',
   't1050-large.sh',
   't1051-large-conversion.sh',
   't1060-object-corruption.sh',
@@ -725,6 +726,8 @@ integration_tests = [
   't5619-clone-local-ambiguous-transport.sh',
   't5620-backfill.sh',
   't5621-clone-revision.sh',
+  't5622-fetch-no-dup.sh',
+  't5623-bblob-smart-transfer.sh',
   't5700-protocol-v1.sh',
   't5701-git-serve.sh',
   't5702-protocol-v2.sh',
@@ -1176,7 +1179,7 @@ foreach glob, tests : {
     missing_tests = [ ]
     foreach actual_test : actual_tests
       if actual_test not in tests
-        missing_tests += actual_test
+	missing_tests += actual_test
       endif
     endforeach
     if missing_tests.length() > 0
@@ -1186,7 +1189,7 @@ foreach glob, tests : {
     superfluous_tests = [ ]
     foreach integration_test : tests
       if integration_test not in actual_tests
-        superfluous_tests += integration_test
+	superfluous_tests += integration_test
       endif
     endforeach
     if superfluous_tests.length() > 0
@@ -1223,7 +1226,7 @@ if perl.found() and time.found()
   foreach benchmark : benchmarks
     benchmark(fs.stem(benchmark), shell,
       args: [
-        fs.name(benchmark),
+	fs.name(benchmark),
       ],
       workdir: meson.current_source_dir() / 'perf',
       env: benchmark_environment,

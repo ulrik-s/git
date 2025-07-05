@@ -946,8 +946,10 @@ static struct option fsck_opts[] = {
 				N_("write dangling objects in .git/lost-found")),
 	OPT_BOOL(0, "progress", &show_progress, N_("show progress")),
 	OPT_BOOL(0, "name-objects", &name_objects, N_("show verbose names for reachable objects")),
-	OPT_BOOL(0, "references", &check_references, N_("check reference database consistency")),
-	OPT_END(),
+	   OPT_BOOL(0, "references", &check_references, N_("check reference database consistency")),
+	   OPT_BOOL(0, "full-bblob-verify", &fsck_obj_options.full_bblob_verify,
+		N_("reassemble bblobs to verify contents")),
+	   OPT_END(),
 };
 
 int cmd_fsck(int argc,

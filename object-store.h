@@ -180,10 +180,15 @@ void raw_object_store_clear(struct raw_object_store *o);
  */
 int odb_mkstemp(struct strbuf *temp_filename, const char *pattern);
 
+void *repo_read_raw_object_file(struct repository *r,
+	const struct object_id *oid,
+	enum object_type *type,
+	unsigned long *size);
+
 void *repo_read_object_file(struct repository *r,
-			    const struct object_id *oid,
-			    enum object_type *type,
-			    unsigned long *size);
+	const struct object_id *oid,
+	enum object_type *type,
+	unsigned long *size);
 
 /* Read and unpack an object file into memory, write memory to an object file */
 int oid_object_info(struct repository *r, const struct object_id *, unsigned long *);
