@@ -80,7 +80,8 @@ int write_bblob(struct repository *r, const void *buf, unsigned long len,
                        git_hash_final(out, &c);
                        bits = (out[r->hash_algo->rawsz - 2] << 8) |
                                out[r->hash_algo->rawsz - 1];
-		       if ((bits & 0x1fff) == 0) {
+                       /* boundary when the trailing checksum hits a match */
+                       if ((bits & BBLOB_BREAK_MASK) == 0) {
                                struct object_id ch;
                                if (write_object_file((const char *)buf + chunk_start,
                                                     i - chunk_start + 1,

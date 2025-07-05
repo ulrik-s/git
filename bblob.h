@@ -9,6 +9,9 @@
 /* heuristic target chunk size when splitting large blobs */
 #define BBLOB_CHUNK_GOAL 4096
 
+/* rolling checksum bits that must match to trigger a split */
+#define BBLOB_BREAK_MASK 0x1fff
+
 struct bblob {
        struct object object;
        struct object_id oids[BBLOB_FANOUT];
