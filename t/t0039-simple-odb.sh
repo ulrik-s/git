@@ -29,10 +29,10 @@ test_expect_success 'blob written to simple ODB is accessible via alternates' '
 
 test_expect_success 'stdin writes work for alternate ODB' '
         test_create_repo stdin-repo &&
+        other_store=$PWD/simple-stdin &&
+        test_when_finished "rm -rf stdin-repo \"$other_store\"" &&
         (
                 cd stdin-repo &&
-                other_store=$PWD/../simple-stdin &&
-                test_when_finished "rm -rf $other_store" &&
                 test-tool simple-odb init "$other_store" &&
                 printf "data via stdin" | test-tool simple-odb write "$other_store" blob - >oid &&
                 test-tool simple-odb add-alternate "$other_store" &&
