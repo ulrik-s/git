@@ -68,4 +68,55 @@ EOF
         )
 '
 
+test_expect_success 'porcelain commit stores large blob in simple ODB alternate' '
+        test_create_repo lop-porcelain &&
+        lop_store=$PWD/lop-porcelain-store &&
+        test_when_finished "rm -rf lop-porcelain \"$lop_store\"" &&
+        (
+                cd lop-porcelain &&
+                test-tool simple-odb init "$lop_store" &&
+                perl -e "binmode STDOUT; print pack(q(C*), map { \$_ % 256 } 0 .. 2047)" >binary.bin &&
+                blob=$(test-tool simple-odb lop-write "$lop_store" 512 blob binary.bin) &&
+                git add binary.bin &&
+                git commit -m "commit binary via lop" &&
+                git show HEAD:binary.bin >out &&
+                test_cmp binary.bin out &&
+                test_path_is_missing ".git/objects/$(test_oid_to_path $blob)" &&
+                test_path_is_file "$lop_store/objects/$(test_oid_to_path $blob)"
+        )
+'
+
+test_expect_success 'porcelain push keeps large blob in shared simple ODB store' '
+        test_create_repo lop-sender &&
+        lop_store=$PWD/lop-shared-store &&
+        test_when_finished "rm -rf lop-sender lop-clone lop-remote.git \"$lop_store\"" &&
+        (
+                cd lop-sender &&
+                test-tool simple-odb init "$lop_store" &&
+                perl -e "binmode STDOUT; print pack(q(C*), map { \$_ % 256 } 0 .. 4095)" >huge.bin &&
+                blob=$(test-tool simple-odb lop-write "$lop_store" 1024 blob huge.bin) &&
+                git add huge.bin &&
+                git commit -m "stage binary for push" &&
+                git init --bare ../lop-remote.git &&
+                git -C ../lop-remote.git config receive.unpackLimit 1 &&
+                mkdir -p ../lop-remote.git/objects/info &&
+                echo "$lop_store/objects" >../lop-remote.git/objects/info/alternates &&
+                git remote add origin ../lop-remote.git &&
+                git push origin HEAD:main &&
+                grep -F "$lop_store/objects" ../lop-remote.git/objects/info/alternates &&
+                git --git-dir=../lop-remote.git symbolic-ref HEAD refs/heads/main &&
+                git --git-dir=../lop-remote.git show main:huge.bin >../received.bin &&
+                test_cmp huge.bin ../received.bin &&
+                test_path_is_file "$lop_store/objects/$(test_oid_to_path $blob)" &&
+                git clone ../lop-remote.git ../lop-clone &&
+                (
+                        cd ../lop-clone &&
+                        mkdir -p .git/objects/info &&
+                        echo "$lop_store/objects" >.git/objects/info/alternates &&
+                        git show HEAD:huge.bin >../clone.bin
+                ) &&
+                test_cmp huge.bin ../clone.bin
+        )
+'
+
 test_done
