@@ -22,7 +22,11 @@ repository's hash algorithm, compresses the `"<type> <size>\0<data>"` payload,
 and writes the result underneath an `objects` directory it maintains on disk.
 The helper exposes commands to initialise the store, append new objects, and
 record the resulting directory as an alternate for the current repository so
-that Git can discover the objects without further patches.【F:simple-odb.c†L1-L158】【F:t/helper/test-simple-odb.c†L1-L89】
+that Git can discover the objects without further patches. It also provides a
+`lop-write` command that dispatches blobs according to a size threshold: small
+payloads are written to the repository's primary object store while larger
+payloads are diverted into the simple store and automatically added as an
+alternate.【F:simple-odb.c†L1-L158】【F:t/helper/test-simple-odb.c†L1-L157】
 
 The accompanying regression test (`t/t0039-simple-odb.sh`) uses the helper to
 write and read blobs, verifying that repositories can read from the alternate
@@ -40,6 +44,20 @@ objects in the same layout as a regular loose object directory. The test suite
 demonstrates this by initialising a repository, adding the helper-managed
 directory as an alternate, and reading objects through `git cat-file` without
 any additional plumbing.【F:t/helper/test-simple-odb.c†L64-L89】【F:t/t0039-simple-odb.sh†L8-L43】
+
+Large Object Promisor experiments
+---------------------------------
+
+The Large Object Promisor (LOP) design aims to keep very large blobs on
+dedicated promisor remotes while the primary remote serves the remainder of the
+repository.【F:Documentation/technical/large-object-promisors.adoc†L15-L114】 The
+`lop-write` helper command mirrors that split locally: a caller passes the
+simple store path and a `blob:limit`-style threshold, and the helper stores
+objects larger than the limit in the alternate while leaving smaller objects in
+the main store. Because the alternate is recorded automatically, subsequent
+commands like `git cat-file` can resolve those large blobs transparently, which
+makes it easy to prototype LOP-aware workflows without modifying Git's core
+ODB routines.【F:t/helper/test-simple-odb.c†L90-L157】【F:t/t0039-simple-odb.sh†L45-L80】
 
 Comparison with other ODB APIs
 ------------------------------

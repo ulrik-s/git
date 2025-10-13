@@ -43,4 +43,29 @@ test_expect_success 'stdin writes work for alternate ODB' '
         )
 '
 
+test_expect_success 'lop-write dispatches by blob size and keeps large blobs in LOP' '
+        test_create_repo lop-main &&
+        lop_store=$PWD/lop-store &&
+        test_when_finished "rm -rf lop-main \"$lop_store\"" &&
+        (
+                cd lop-main &&
+                test-tool simple-odb init "$lop_store" &&
+                echo "tiny" >small &&
+                small=$(test-tool simple-odb lop-write "$lop_store" 8 blob small) &&
+                test_path_is_file ".git/objects/$(test_oid_to_path $small)" &&
+                test_path_is_missing "$lop_store/objects/$(test_oid_to_path $small)" &&
+                cat >large <<-EOF &&
+                contents stored in lop
+EOF
+                large=$(test-tool simple-odb lop-write "$lop_store" 8 blob large) &&
+                test_path_is_missing ".git/objects/$(test_oid_to_path $large)" &&
+                test_path_is_file "$lop_store/objects/$(test_oid_to_path $large)" &&
+                git cat-file -p "$large" >out &&
+                cat >expect <<-EOF &&
+                contents stored in lop
+EOF
+                test_cmp expect out
+        )
+'
+
 test_done
