@@ -86,37 +86,62 @@ test_expect_success 'porcelain commit stores large blob in simple ODB alternate'
         )
 '
 
-test_expect_success 'porcelain push keeps large blob in shared simple ODB store' '
-        test_create_repo lop-sender &&
-        lop_store=$PWD/lop-shared-store &&
-        test_when_finished "rm -rf lop-sender lop-clone lop-remote.git \"$lop_store\"" &&
+test_expect_success 'partial clone fetches large blob from LOP remote via alternates' '
+        test_create_repo lop-producer &&
+        lop_store=$PWD/lop-promisor-store &&
+        server=$PWD/lop-server.git &&
+        lop_remote=$PWD/lop-promisor.git &&
+        client=$PWD/lop-client &&
+        blob_oid_file=$PWD/lop-blob.oid &&
+        test_when_finished "rm -rf lop-producer" &&
+        test_when_finished "rm -rf \"$client\"" &&
+        test_when_finished "rm -rf \"$lop_store\" \"$server\" \"$lop_remote\"" &&
+        test_when_finished "rm -f client.bin \"$blob_oid_file\"" &&
+        test-tool simple-odb init "$lop_store" &&
         (
-                cd lop-sender &&
-                test-tool simple-odb init "$lop_store" &&
-                perl -e "binmode STDOUT; print pack(q(C*), map { \$_ % 256 } 0 .. 4095)" >huge.bin &&
-                blob=$(test-tool simple-odb lop-write "$lop_store" 1024 blob huge.bin) &&
+                cd lop-producer &&
+                perl -e "binmode STDOUT; print pack(q(C*), map { \$_ % 251 } 0 .. 7000)" >huge.bin &&
+                blob=$(test-tool simple-odb lop-write "$lop_store" 4096 blob huge.bin) &&
                 git add huge.bin &&
-                git commit -m "stage binary for push" &&
-                git init --bare ../lop-remote.git &&
-                git -C ../lop-remote.git config receive.unpackLimit 1 &&
-                mkdir -p ../lop-remote.git/objects/info &&
-                echo "$lop_store/objects" >../lop-remote.git/objects/info/alternates &&
-                git remote add origin ../lop-remote.git &&
-                git push origin HEAD:main &&
-                grep -F "$lop_store/objects" ../lop-remote.git/objects/info/alternates &&
-                git --git-dir=../lop-remote.git symbolic-ref HEAD refs/heads/main &&
-                git --git-dir=../lop-remote.git show main:huge.bin >../received.bin &&
-                test_cmp huge.bin ../received.bin &&
-                test_path_is_file "$lop_store/objects/$(test_oid_to_path $blob)" &&
-                git clone ../lop-remote.git ../lop-clone &&
-                (
-                        cd ../lop-clone &&
-                        mkdir -p .git/objects/info &&
-                        echo "$lop_store/objects" >.git/objects/info/alternates &&
-                        git show HEAD:huge.bin >../clone.bin
-                ) &&
-                test_cmp huge.bin ../clone.bin
-        )
+                git commit -m "commit huge blob via lop" &&
+                echo "$blob" >"$blob_oid_file"
+        ) &&
+        blob_oid=$(cat "$blob_oid_file") &&
+        git init --bare "$server" &&
+        mkdir -p "$server/objects/info" &&
+        echo "$lop_store/objects" >"$server/objects/info/alternates" &&
+        git -C "$server" config uploadpack.allowFilter true &&
+        git -C "$server" config uploadpack.allowAnySHA1InWant true &&
+        git -C "$server" config promisor.advertise true &&
+        (
+                cd lop-producer &&
+                git remote add origin "$server" &&
+                git push origin HEAD:main
+        ) &&
+        git -C "$server" symbolic-ref HEAD refs/heads/main &&
+        test_path_is_missing "$server/objects/$(test_oid_to_path $blob_oid)" &&
+        git init --bare "$lop_remote" &&
+        mkdir -p "$lop_remote/objects/info" &&
+        echo "$lop_store/objects" >"$lop_remote/objects/info/alternates" &&
+        git -C "$lop_remote" config uploadpack.allowFilter true &&
+        git -C "$lop_remote" config uploadpack.allowAnySHA1InWant true &&
+        git -C "$server" remote add lop "file://$lop_remote" &&
+        git -C "$server" config remote.lop.promisor true &&
+        git -C "$server" config remote.lop.fetch "+refs/heads/*:refs/remotes/lop/*" &&
+        git -C "$server" config remote.lop.url "file://$lop_remote" &&
+        GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
+                -c remote.lop.fetch="+refs/heads/*:refs/remotes/lop/*" \
+                -c remote.lop.url="file://$lop_remote" \
+                -c promisor.acceptfromserver=All \
+                --no-local --filter="blob:limit=5k" "$server" "$client" &&
+        test_path_is_missing "$client/.git/objects/$(test_oid_to_path $blob_oid)" &&
+        (
+                cd "$client" &&
+                git cat-file -p HEAD:huge.bin >../client.bin
+        ) &&
+        test_cmp lop-producer/huge.bin client.bin &&
+        test_path_is_file "$lop_store/objects/$(test_oid_to_path $blob_oid)" &&
+        git -C "$client" cat-file -e "$blob_oid"
 '
 
 test_done
