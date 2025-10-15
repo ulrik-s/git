@@ -40,15 +40,16 @@ git -C "$SERVER" config promisor.advertise true
 git -C "$SERVER" config promisor.sendFields partialCloneFilter
 
 config_promisor_remote() {
-  local repo=$1 name=$2 url=$3 filter=$4
+  local repo=$1 name=$2 url=$3
   git -C "$repo" config "remote.${name}.url" "$url"
   git -C "$repo" config "remote.${name}.fetch" "+refs/heads/*:refs/remotes/${name}/*"
   git -C "$repo" config "remote.${name}.promisor" true
-  git -C "$repo" config "remote.${name}.partialCloneFilter" "$filter"
 }
 
-config_promisor_remote "$SERVER" lopSmall "$LOP_SMALL_URL" "blob:none"
-config_promisor_remote "$SERVER" lopLarge "$LOP_LARGE_URL" "blob:none"
+config_promisor_remote "$SERVER" lopSmall "$LOP_SMALL_URL"
+config_promisor_remote "$SERVER" lopLarge "$LOP_LARGE_URL"
+git -C "$SERVER" config --add promisor.remote lopSmall
+git -C "$SERVER" config --add promisor.remote lopLarge
 
 say "Link server alternates to promisor stores"
 mkdir -p "$SERVER/objects/info"
@@ -132,8 +133,15 @@ git -C "$SERVER" config lop.largePath "$LOP_LARGE"
 git -C "$SERVER" config lop.thresholdBytes "$THRESHOLD"
 
 clone_with_promisors() {
-  local dest=$1
+  local dest=$1 filter=${2:-} no_checkout=${3:-0}
   rm -rf "$dest"
+  local clone_args=("$SERVER_URL" "$dest")
+  if [ -n "$filter" ]; then
+    clone_args=("--filter=$filter" "${clone_args[@]}")
+  fi
+  if [ "$no_checkout" = 1 ]; then
+    clone_args=(--no-checkout "${clone_args[@]}")
+  fi
   git clone \
     -c promisor.acceptFromServer=All \
     -c remote.lopSmall.promisor=true \
@@ -142,7 +150,10 @@ clone_with_promisors() {
     -c remote.lopLarge.promisor=true \
     -c remote.lopLarge.url="$LOP_LARGE_URL" \
     -c remote.lopLarge.fetch="+refs/heads/*:refs/remotes/lopLarge/*" \
-    "$SERVER_URL" "$dest" >/dev/null
+    "${clone_args[@]}" >/dev/null
+  if [ -n "$filter" ]; then
+    git -C "$dest" config extensions.partialclone origin
+  fi
 }
 
 say "Clone client"
@@ -174,7 +185,12 @@ if [ "$SEED_INITIAL" = 1 ]; then
   git -C "$SERVER" symbolic-ref HEAD "refs/heads/$BRANCH" >/dev/null || true
 
   say "Clone smart client (client2)"
-  clone_with_promisors "$CLIENT2"
+  clone_with_promisors "$CLIENT2" "blob:none" 1
+  latest_blob=$(git -C "$CLIENT2" ls-tree "origin/$BRANCH" -- big-8MiB.bin | awk '{print $3}')
+  if [ -n "$latest_blob" ]; then
+    git -C "$CLIENT2" fetch lopLarge "$latest_blob" >/dev/null
+  fi
+  git -C "$CLIENT2" checkout "$BRANCH" >/dev/null
 fi
 
 say "Repository sizes"
