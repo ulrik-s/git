@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEST=${DEST:-$PWD/lop-demo}
+BRANCH=${BRANCH:-main}
+THRESHOLD=${THRESHOLD:-1048576}
+SEED_INITIAL=${SEED_INITIAL:-1}
+
+say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+abspath() { (cd "$1" >/dev/null 2>&1 && pwd -P) || { echo "ERROR: '$1' not found" >&2; exit 1; }; }
+file_url() { printf 'file://%s\n' "$(abspath "$1")"; }
+
+rm -rf "$DEST"
+mkdir -p "$DEST"
+ROOT=$(abspath "$DEST")
+
+LOP_SMALL="$ROOT/lop-small.git"
+LOP_LARGE="$ROOT/lop-large.git"
+SERVER="$ROOT/server.git"
+CLIENT="$ROOT/client"
+CLIENT2="$ROOT/client2"
+
+init_bare() {
+  git init --bare "$1" >/dev/null
+  git -C "$1" config uploadpack.allowFilter true
+  git -C "$1" config uploadpack.allowAnySHA1InWant true
+}
+
+say "Create bare repositories"
+init_bare "$LOP_SMALL"
+init_bare "$LOP_LARGE"
+init_bare "$SERVER"
+
+SERVER_URL=$(file_url "$SERVER")
+LOP_SMALL_URL=$(file_url "$LOP_SMALL")
+LOP_LARGE_URL=$(file_url "$LOP_LARGE")
+
+say "Configure promisor remotes on server"
+git -C "$SERVER" config promisor.advertise true
+git -C "$SERVER" config promisor.sendFields partialCloneFilter
+
+config_promisor_remote() {
+  local repo=$1 name=$2 url=$3 filter=$4
+  git -C "$repo" config "remote.${name}.url" "$url"
+  git -C "$repo" config "remote.${name}.fetch" "+refs/heads/*:refs/remotes/${name}/*"
+  git -C "$repo" config "remote.${name}.promisor" true
+  git -C "$repo" config "remote.${name}.partialCloneFilter" "$filter"
+}
+
+config_promisor_remote "$SERVER" lopSmall "$LOP_SMALL_URL" "blob:none"
+config_promisor_remote "$SERVER" lopLarge "$LOP_LARGE_URL" "blob:none"
+
+say "Link server alternates to promisor stores"
+mkdir -p "$SERVER/objects/info"
+{
+  printf '%s/objects\n' "$(abspath "$LOP_LARGE")"
+  printf '%s/objects\n' "$(abspath "$LOP_SMALL")"
+} >"$SERVER/objects/info/alternates"
+
+git -C "$SERVER" config gc.writeBitmaps false
+git -C "$SERVER" config repack.writeBitmaps false
+
+say "Install post-receive hook"
+cat <<'HOOK' >"$SERVER/hooks/post-receive"
+#!/usr/bin/env bash
+set -euo pipefail
+
+zeros=0000000000000000000000000000000000000000
+root=$(pwd -P)
+small=$(git config --get lop.smallPath)
+large=$(git config --get lop.largePath)
+threshold=$(git config --get lop.thresholdBytes)
+
+[ -n "${small:-}" ] && [ -n "${large:-}" ] && [ -n "${threshold:-}" ] || exit 0
+
+git -C "$small" config remote.server.url "file://$root"
+git -C "$small" config remote.server.fetch "+refs/heads/*:refs/heads/*"
+git -C "$large" config remote.server.url "file://$root"
+git -C "$large" config remote.server.fetch "+refs/heads/*:refs/heads/*"
+
+refs=()
+tips=()
+while read -r old new ref; do
+  [ "$new" = "$zeros" ] && continue
+  case "$ref" in
+  refs/heads/*)
+    refs+=("+$ref:$ref")
+    tips+=("$new")
+    ;;
+  esac
+done
+
+[ "${#refs[@]}" -eq 0 ] && exit 0
+
+git -C "$small" fetch --filter="blob:limit=$threshold" server "${refs[@]}"
+git -C "$large" fetch --filter="blob:none" server "${refs[@]}"
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+git rev-list --objects --filter="blob:limit=$threshold" --filter-print-omitted "${tips[@]}" \
+  | sed -n 's/^~//p' >"$tmp"
+if [ -s "$tmp" ]; then
+  xargs -r -n256 git -C "$large" fetch server <"$tmp"
+fi
+
+repack() {
+  git -c repack.writeBitmaps=false -c repack.packKeptObjects=true -C "$root" \
+    repack -Ad -d --no-write-bitmap-index "$@"
+}
+
+repack --filter="blob:limit=$threshold" --filter-to="$large/objects"
+repack --filter="blob:none" --filter-to="$small/objects"
+repack --filter="blob:none"
+ 
+purge_blob_packs() {
+  for idx in "$root/objects/pack"/pack-*.idx; do
+    [ -e "$idx" ] || continue
+    base=${idx%.idx}
+    if [ -f "$base.promisor" ] || git -C "$root" verify-pack -v "$idx" 2>/dev/null | grep -q ' blob '; then
+      rm -f "$base".idx "$base".pack "$base".rev "$base".promisor 2>/dev/null || true
+    fi
+  done
+}
+
+purge_blob_packs
+HOOK
+chmod +x "$SERVER/hooks/post-receive"
+
+git -C "$SERVER" config lop.smallPath "$LOP_SMALL"
+git -C "$SERVER" config lop.largePath "$LOP_LARGE"
+git -C "$SERVER" config lop.thresholdBytes "$THRESHOLD"
+
+clone_with_promisors() {
+  local dest=$1
+  rm -rf "$dest"
+  git clone \
+    -c promisor.acceptFromServer=All \
+    -c remote.lopSmall.promisor=true \
+    -c remote.lopSmall.url="$LOP_SMALL_URL" \
+    -c remote.lopSmall.fetch="+refs/heads/*:refs/remotes/lopSmall/*" \
+    -c remote.lopLarge.promisor=true \
+    -c remote.lopLarge.url="$LOP_LARGE_URL" \
+    -c remote.lopLarge.fetch="+refs/heads/*:refs/remotes/lopLarge/*" \
+    "$SERVER_URL" "$dest" >/dev/null
+}
+
+say "Clone client"
+clone_with_promisors "$CLIENT"
+
+if [ "$SEED_INITIAL" = 1 ]; then
+  say "Create sample commits"
+  git -C "$CLIENT" switch -c "$BRANCH" >/dev/null || git -C "$CLIENT" checkout -b "$BRANCH" >/dev/null
+  git -C "$CLIENT" config user.name "LOP Demo"
+  git -C "$CLIENT" config user.email "lop-demo@example.invalid"
+  echo '# LOP demo' >"$CLIENT/README.md"
+  git -C "$CLIENT" add README.md
+  git -C "$CLIENT" commit -m "Initial commit" >/dev/null
+  git -C "$CLIENT" push -u origin "$BRANCH" >/dev/null
+
+  (
+    cd "$CLIENT" >/dev/null
+    add_blob_commit() {
+      local count=$1 message=$2
+      dd if=/dev/urandom of=big-8MiB.bin bs=1M count="$count" status=none
+      git add big-8MiB.bin
+      git commit -m "$message" >/dev/null
+      git push >/dev/null
+    }
+    add_blob_commit 8 "Add 8MiB demo blob"
+    add_blob_commit 2 "Replace with 2MiB blob"
+  )
+
+  git -C "$SERVER" symbolic-ref HEAD "refs/heads/$BRANCH" >/dev/null || true
+
+  say "Clone smart client (client2)"
+  clone_with_promisors "$CLIENT2"
+fi
+
+say "Repository sizes"
+du -hs "$SERVER" "$LOP_SMALL" "$LOP_LARGE" "$CLIENT" ${CLIENT2:+"$CLIENT2"}
+
+cat <<EOF
+============================================================
+Setup complete.
+
+Server  : $SERVER
+Small   : $LOP_SMALL
+Large   : $LOP_LARGE
+Client  : $CLIENT
+Client2 : ${CLIENT2:-<not created>}
+
+Threshold: $THRESHOLD bytes
+
+Inspect server:
+  ls -lh "$SERVER/objects/pack"
+
+Inspect promisor stores:
+  git -C "$LOP_SMALL" rev-list --objects --all | head
+  git -C "$LOP_LARGE" rev-list --objects --all | grep big-8MiB.bin || true
+
+Inspect smart clone:
+  git -C "$CLIENT2" rev-list --objects --all | grep big-8MiB.bin || true
+  git -C "$CLIENT2" count-objects -vH
+============================================================
+EOF
