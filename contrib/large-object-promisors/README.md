@@ -20,6 +20,8 @@ overridden to tweak where the repositories live, which branch is created, the si
 threshold used to classify blobs (default 1 MiB), and whether to create the sample
 commits. When `SEED_INITIAL=1` the script pushes two large blobs (8 MiB then 2 MiB)
 from the first client, clones a fresh `client2` after those pushes with
-`--filter=blob:none`, explicitly prefetches just the tip blob from the large
-promisor store, and prints a size summary for each repository so you can compare how
-much data landed in the smart clone.
+`--filter=blob:none`, checks out the branch to trigger a lazy fetch of just the
+tip blob from the large promisor store, and prints a size summary for each
+repository so you can compare how much data landed in the smart clone. The
+promisor configuration itself now flows from the server, so the clone commands
+shown in the script mirror what an ordinary user would type.
