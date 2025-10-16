@@ -27,7 +27,9 @@ summary for each repository so you can compare where the large and small histori
 ended up. The script writes a throwaway global config that sets
 `promisor.acceptFromServer=All`, allowing the clones it performs to accept the
 promisor remotes advertised by the server without spelling out `-c remote.*`
-arguments. When run with an older Git that lacks the advertisement support the
-script emits a warning and copies the promisor-remote configuration directly
-from the server so the rest of the demo still succeeds. The script also prints
-the full `git clone` command for clarity during the demo.
+arguments. Each clone forces protocol v2 (`-c protocol.version=2`) so the
+`promisor-remote` capability is available. The script validates that both
+promisor remotes arrive via the
+advertisement protocol (see `t/t5710` for the low-level coverage) so you know
+you are running with a recent enough Git. It also prints the full `git clone`
+command for clarity during the demo.

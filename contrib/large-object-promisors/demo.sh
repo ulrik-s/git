@@ -139,6 +139,7 @@ clone_with_promisors() {
   local dest=$1 filter=${2:-} no_checkout=${3:-0}
   rm -rf "$dest"
   local clone_args=()
+  clone_args+=("-c" "protocol.version=2")
   if [ -n "$filter" ]; then
     clone_args+=("--filter=$filter")
   fi
@@ -153,29 +154,21 @@ clone_with_promisors() {
   git clone "${clone_args[@]}" "$SERVER_URL" "$dest" >/dev/null
 }
 
-ensure_remote_advertised() {
+require_advertised_remote() {
   local repo=$1 remote=$2
   if ! git -C "$repo" config --get "remote.${remote}.url" >/dev/null 2>&1; then
-    echo "WARNING: promisor remote '$remote' was not advertised to $repo; populating from server config" >&2
-    local url filter fetch
-    url=$(git -C "$SERVER" config --get "remote.${remote}.url")
-    fetch=$(git -C "$SERVER" config --get "remote.${remote}.fetch")
-    filter=$(git -C "$SERVER" config --get "remote.${remote}.partialCloneFilter" || true)
-    git -C "$repo" config "remote.${remote}.url" "$url"
-    git -C "$repo" config "remote.${remote}.fetch" "$fetch"
-    git -C "$repo" config "remote.${remote}.promisor" true
-    if [ -n "$filter" ]; then
-      git -C "$repo" config "remote.${remote}.partialCloneFilter" "$filter"
-    fi
-    return
+    cat <<EOF >&2
+ERROR: promisor remote '$remote' was not advertised to $repo.
+       Ensure your Git is built from a revision that includes the
+       Large Object Promisors advertisement protocol (see t/t5710).
+EOF
+    exit 1
   fi
   git -C "$repo" config --get "remote.${remote}.promisor" >/dev/null
 }
 
 say "Clone client"
 clone_with_promisors "$CLIENT"
-ensure_remote_advertised "$CLIENT" lopSmall
-ensure_remote_advertised "$CLIENT" lopLarge
 
 if [ "$SEED_INITIAL" = 1 ]; then
   say "Create sample commits"
@@ -243,8 +236,8 @@ if [ "$SEED_INITIAL" = 1 ]; then
   say "Clone smart client (client2)"
   clone_with_promisors "$CLIENT2" "blob:none" 1
   git -C "$CLIENT2" checkout "$BRANCH" >/dev/null
-  ensure_remote_advertised "$CLIENT2" lopSmall
-  ensure_remote_advertised "$CLIENT2" lopLarge
+  require_advertised_remote "$CLIENT2" lopSmall
+  require_advertised_remote "$CLIENT2" lopLarge
 fi
 
 say "Repository sizes"
