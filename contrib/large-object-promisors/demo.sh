@@ -40,14 +40,17 @@ git -C "$SERVER" config promisor.advertise true
 git -C "$SERVER" config promisor.sendFields partialCloneFilter
 
 config_promisor_remote() {
-  local repo=$1 name=$2 url=$3
+  local repo=$1 name=$2 url=$3 filter=${4:-}
   git -C "$repo" config "remote.${name}.url" "$url"
   git -C "$repo" config "remote.${name}.fetch" "+refs/heads/*:refs/remotes/${name}/*"
   git -C "$repo" config "remote.${name}.promisor" true
+  if [ -n "$filter" ]; then
+    git -C "$repo" config "remote.${name}.partialCloneFilter" "$filter"
+  fi
 }
 
-config_promisor_remote "$SERVER" lopSmall "$LOP_SMALL_URL"
-config_promisor_remote "$SERVER" lopLarge "$LOP_LARGE_URL"
+config_promisor_remote "$SERVER" lopSmall "$LOP_SMALL_URL" "blob:limit=$THRESHOLD"
+config_promisor_remote "$SERVER" lopLarge "$LOP_LARGE_URL" blob:none
 git -C "$SERVER" config --add promisor.remote lopSmall
 git -C "$SERVER" config --add promisor.remote lopLarge
 
@@ -127,7 +130,17 @@ git -C "$SERVER" config lop.thresholdBytes "$THRESHOLD"
 clone_with_promisors() {
   local dest=$1 filter=${2:-} no_checkout=${3:-0}
   rm -rf "$dest"
-  local clone_args=()
+  local clone_args=(-c promisor.acceptFromServer=All)
+  clone_args+=(
+    -c remote.lopSmall.promisor=true
+    -c "remote.lopSmall.url=$LOP_SMALL_URL"
+    -c "remote.lopSmall.fetch=+refs/heads/*:refs/remotes/lopSmall/*"
+    -c "remote.lopSmall.partialCloneFilter=blob:limit=$THRESHOLD"
+    -c remote.lopLarge.promisor=true
+    -c "remote.lopLarge.url=$LOP_LARGE_URL"
+    -c "remote.lopLarge.fetch=+refs/heads/*:refs/remotes/lopLarge/*"
+    -c remote.lopLarge.partialCloneFilter=blob:none
+  )
   if [ -n "$filter" ]; then
     clone_args+=("--filter=$filter")
   fi

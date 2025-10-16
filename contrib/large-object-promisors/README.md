@@ -24,5 +24,7 @@ below the threshold) from the first client. After those pushes it clones a fresh
 `client2` with `--filter=blob:none`, checks out the branch to trigger a lazy fetch
 of only the tip's large blob from the large promisor store, and prints a size
 summary for each repository so you can compare where the large and small histories
-ended up. The promisor configuration itself now flows from the server, so the
-clone commands shown in the script mirror what an ordinary user would type.
+ended up. Each clone passes `-c promisor.acceptFromServer=All` and the
+`remote.lop{Small,Large}.*` configuration so the promisor remotes are persisted
+without any manual follow-up, and the script prints the full `git clone` command
+for clarity during the demo.
