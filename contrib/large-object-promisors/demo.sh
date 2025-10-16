@@ -20,6 +20,14 @@ SERVER="$ROOT/server.git"
 CLIENT="$ROOT/client"
 CLIENT2="$ROOT/client2"
 
+say "Prepare demo-wide Git config"
+DEMO_CONFIG="$ROOT/gitconfig"
+cat >"$DEMO_CONFIG" <<'EOF'
+[promisor]
+acceptFromServer = All
+EOF
+export GIT_CONFIG_GLOBAL="$DEMO_CONFIG"
+
 init_bare() {
   git init --bare "$1" >/dev/null
   git -C "$1" config uploadpack.allowFilter true
@@ -130,17 +138,7 @@ git -C "$SERVER" config lop.thresholdBytes "$THRESHOLD"
 clone_with_promisors() {
   local dest=$1 filter=${2:-} no_checkout=${3:-0}
   rm -rf "$dest"
-  local clone_args=(-c promisor.acceptFromServer=All)
-  clone_args+=(
-    -c remote.lopSmall.promisor=true
-    -c "remote.lopSmall.url=$LOP_SMALL_URL"
-    -c "remote.lopSmall.fetch=+refs/heads/*:refs/remotes/lopSmall/*"
-    -c "remote.lopSmall.partialCloneFilter=blob:limit=$THRESHOLD"
-    -c remote.lopLarge.promisor=true
-    -c "remote.lopLarge.url=$LOP_LARGE_URL"
-    -c "remote.lopLarge.fetch=+refs/heads/*:refs/remotes/lopLarge/*"
-    -c remote.lopLarge.partialCloneFilter=blob:none
-  )
+  local clone_args=()
   if [ -n "$filter" ]; then
     clone_args+=("--filter=$filter")
   fi
@@ -155,8 +153,29 @@ clone_with_promisors() {
   git clone "${clone_args[@]}" "$SERVER_URL" "$dest" >/dev/null
 }
 
+ensure_remote_advertised() {
+  local repo=$1 remote=$2
+  if ! git -C "$repo" config --get "remote.${remote}.url" >/dev/null 2>&1; then
+    echo "WARNING: promisor remote '$remote' was not advertised to $repo; populating from server config" >&2
+    local url filter fetch
+    url=$(git -C "$SERVER" config --get "remote.${remote}.url")
+    fetch=$(git -C "$SERVER" config --get "remote.${remote}.fetch")
+    filter=$(git -C "$SERVER" config --get "remote.${remote}.partialCloneFilter" || true)
+    git -C "$repo" config "remote.${remote}.url" "$url"
+    git -C "$repo" config "remote.${remote}.fetch" "$fetch"
+    git -C "$repo" config "remote.${remote}.promisor" true
+    if [ -n "$filter" ]; then
+      git -C "$repo" config "remote.${remote}.partialCloneFilter" "$filter"
+    fi
+    return
+  fi
+  git -C "$repo" config --get "remote.${remote}.promisor" >/dev/null
+}
+
 say "Clone client"
 clone_with_promisors "$CLIENT"
+ensure_remote_advertised "$CLIENT" lopSmall
+ensure_remote_advertised "$CLIENT" lopLarge
 
 if [ "$SEED_INITIAL" = 1 ]; then
   say "Create sample commits"
@@ -224,6 +243,8 @@ if [ "$SEED_INITIAL" = 1 ]; then
   say "Clone smart client (client2)"
   clone_with_promisors "$CLIENT2" "blob:none" 1
   git -C "$CLIENT2" checkout "$BRANCH" >/dev/null
+  ensure_remote_advertised "$CLIENT2" lopSmall
+  ensure_remote_advertised "$CLIENT2" lopLarge
 fi
 
 say "Repository sizes"
