@@ -106,26 +106,17 @@ if [ -s "$tmp" ]; then
   xargs -r -n256 git -C "$large" fetch server <"$tmp"
 fi
 
-repack() {
-  git -c repack.writeBitmaps=false -c repack.packKeptObjects=true -C "$root" \
-    repack -Ad -d --no-write-bitmap-index "$@"
-}
+git -c repack.writeBitmaps=false -c repack.packKeptObjects=true -C "$root" \
+  repack -Ad -d --no-write-bitmap-index \
+  --filter="blob:limit=$threshold" \
+  --filter-to="$large/objects"
 
-repack --filter="blob:limit=$threshold" --filter-to="$large/objects"
-repack --filter="blob:none" --filter-to="$small/objects"
-repack --filter="blob:none"
- 
-purge_blob_packs() {
-  for idx in "$root/objects/pack"/pack-*.idx; do
-    [ -e "$idx" ] || continue
-    base=${idx%.idx}
-    if [ -f "$base.promisor" ] || git -C "$root" verify-pack -v "$idx" 2>/dev/null | grep -q ' blob '; then
-      rm -f "$base".idx "$base".pack "$base".rev "$base".promisor 2>/dev/null || true
-    fi
-  done
-}
+git -c repack.writeBitmaps=false -c repack.packKeptObjects=true -C "$root" \
+  repack -Ad -d --no-write-bitmap-index \
+  --filter="blob:none" \
+  --filter-to="$small/objects"
 
-purge_blob_packs
+git -C "$root" prune-packed
 HOOK
 chmod +x "$SERVER/hooks/post-receive"
 
@@ -161,15 +152,53 @@ if [ "$SEED_INITIAL" = 1 ]; then
 
   (
     cd "$CLIENT" >/dev/null
+
+    write_random_blob() {
+      local path=$1 bytes=$2
+      dd if=/dev/urandom of="$path" bs="$bytes" count=1 status=none
+    }
+
+    ensure_above_threshold() {
+      local size=$1 threshold=$2
+      while [ "$size" -le "$threshold" ]; do
+        size=$((size + 1024 * 1024))
+      done
+      printf '%s' "$size"
+    }
+
+    ensure_below_threshold() {
+      local size=$1 threshold=$2
+      if [ "$threshold" -le 1 ]; then
+        printf '1'
+        return
+      fi
+      if [ "$size" -ge "$threshold" ]; then
+        size=$((threshold - 1))
+        [ "$size" -lt 1 ] && size=1
+      fi
+      printf '%s' "$size"
+    }
+
     add_blob_commit() {
-      local count=$1 message=$2
-      dd if=/dev/urandom of=big-8MiB.bin bs=1M count="$count" status=none
-      git add big-8MiB.bin
+      local path=$1 bytes=$2 message=$3
+      write_random_blob "$path" "$bytes"
+      git add "$path"
       git commit -m "$message" >/dev/null
       git push >/dev/null
     }
-    add_blob_commit 8 "Add 8MiB demo blob"
-    add_blob_commit 2 "Replace with 2MiB blob"
+
+    big_path=big-demo.bin
+    big_bytes_1=$(ensure_above_threshold $((8 * 1024 * 1024)) "$THRESHOLD")
+    big_bytes_2=$(ensure_above_threshold $((2 * 1024 * 1024)) "$THRESHOLD")
+    add_blob_commit "$big_path" "$big_bytes_1" "Add large demo blob"
+    add_blob_commit "$big_path" "$big_bytes_2" "Replace with newer large blob"
+
+    small_path=small-demo.bin
+    small_bytes_1=$(ensure_below_threshold $((512 * 1024)) "$THRESHOLD")
+    small_bytes_2=$(ensure_below_threshold $((256 * 1024)) "$THRESHOLD")
+    [ "$small_bytes_2" -ge "$small_bytes_1" ] && small_bytes_2=$((small_bytes_1 > 1 ? small_bytes_1 - 1 : 1))
+    add_blob_commit "$small_path" "$small_bytes_1" "Add small demo blob"
+    add_blob_commit "$small_path" "$small_bytes_2" "Replace with newer small blob"
   )
 
   git -C "$SERVER" symbolic-ref HEAD "refs/heads/$BRANCH" >/dev/null || true
