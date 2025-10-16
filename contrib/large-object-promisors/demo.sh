@@ -134,6 +134,11 @@ clone_with_promisors() {
   if [ "$no_checkout" = 1 ]; then
     clone_args+=(--no-checkout)
   fi
+  local display_opts=""
+  if [ "${#clone_args[@]}" -gt 0 ]; then
+    printf -v display_opts ' %q' "${clone_args[@]}"
+  fi
+  printf '  git clone%s %q %q\n' "$display_opts" "$SERVER_URL" "$dest"
   git clone "${clone_args[@]}" "$SERVER_URL" "$dest" >/dev/null
 }
 
