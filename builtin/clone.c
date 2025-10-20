@@ -1587,23 +1587,23 @@ int cmd_clone(int argc,
 		free(to_free);
 	}
 
-        if (!option_rev)
-                write_refspec_config(src_ref_prefix, our_head_points_at,
-                                     remote_head_points_at, &branch_top);
+	if (!option_rev)
+	{
+		const char *promisor_remote_info;
 
-        {
-                const char *promisor_remote_info;
+		write_refspec_config(src_ref_prefix, our_head_points_at,
+								remote_head_points_at, &branch_top);
 
-                if (server_feature_v2("promisor-remote", &promisor_remote_info))
-                        promisor_remote_configure_from_info(the_repository,
-                                                            promisor_remote_info);
-        }
+		if (server_feature_v2("promisor-remote", &promisor_remote_info))
+				promisor_remote_configure_from_info(the_repository,
+													promisor_remote_info);
+	}
 
-        if (filter_options.choice)
-                partial_clone_register(remote_name, &filter_options);
+	if (filter_options.choice)
+			partial_clone_register(remote_name, &filter_options);
 
-        if (is_local)
-                clone_local(path, git_dir);
+	if (is_local)
+			clone_local(path, git_dir);
 	else if (mapped_refs && complete_refs_before_fetch) {
 		if (transport_fetch_refs(transport, mapped_refs))
 			die(_("remote transport reported error"));
