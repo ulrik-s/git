@@ -430,9 +430,59 @@ static void promisor_info_free(struct promisor_info *p)
 
 static void promisor_info_list_clear(struct string_list *list)
 {
-	for (size_t i = 0; i < list->nr; i++)
-		promisor_info_free(list->items[i].util);
-	string_list_clear(list, 0);
+        for (size_t i = 0; i < list->nr; i++)
+                promisor_info_free(list->items[i].util);
+        string_list_clear(list, 0);
+}
+
+static struct string_list advertised_filters = STRING_LIST_INIT_DUP;
+static int saw_advertised_acceptance;
+
+static void reset_advertised_filters(void)
+{
+        string_list_clear(&advertised_filters, 0);
+        saw_advertised_acceptance = 0;
+}
+
+void promisor_remote_capability_reset(void)
+{
+        reset_advertised_filters();
+}
+
+static int list_contains_string(const struct string_list *list, const char *value)
+{
+        for (size_t i = 0; i < list->nr; i++)
+                if (!strcmp(list->items[i].string, value))
+                        return 1;
+        return 0;
+}
+
+static void record_advertised_filter(const struct promisor_info *info)
+{
+        saw_advertised_acceptance = 1;
+
+        if (!info->filter || !*info->filter)
+                return;
+
+        if (!list_contains_string(&advertised_filters, info->filter))
+                string_list_append(&advertised_filters, info->filter);
+}
+
+const char *promisor_remote_advertised_filter(void)
+{
+        if (!saw_advertised_acceptance)
+                return NULL;
+
+        if (!advertised_filters.nr)
+                return NULL;
+
+        for (size_t i = 1; i < advertised_filters.nr; i++) {
+                if (strcmp(advertised_filters.items[i].string,
+                           advertised_filters.items[0].string))
+                        return NULL;
+        }
+
+        return advertised_filters.items[0].string;
 }
 
 static void set_one_field(struct promisor_info *p,
@@ -736,11 +786,13 @@ static void filter_promisor_remote(struct repository *repo,
 			string_list_sort(&config_info);
 		}
 
-		if (should_accept_remote(accept, advertised, &config_info))
-			strvec_push(accepted, advertised->name);
+                if (should_accept_remote(accept, advertised, &config_info)) {
+                        strvec_push(accepted, advertised->name);
+                        record_advertised_filter(advertised);
+                }
 
-		promisor_info_free(advertised);
-	}
+                promisor_info_free(advertised);
+        }
 
 	promisor_info_list_clear(&config_info);
 	string_list_clear(&remote_info, 0);

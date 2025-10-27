@@ -4,6 +4,12 @@ test_description='handling of promisor remote advertisement'
 
 . ./test-lib.sh
 
+if test -n "$GIT_TEST_LOP_COVERAGE"
+then
+        . "$TEST_DIRECTORY"/lib-lop-gcov.sh
+        lop_gcov_prepare
+fi
+
 if ! test_have_prereq PERL_TEST_HELPERS
 then
 	skip_all='skipping promisor remote capabilities tests; Perl not available'
@@ -429,16 +435,26 @@ test_expect_success "subsequent fetch from a client when promisor.advertise is t
 '
 
 test_expect_success "subsequent fetch from a client when promisor.advertise is false" '
-	git -C server config promisor.advertise false &&
+        git -C server config promisor.advertise false &&
 
-	GIT_NO_LAZY_FETCH=0 git -C client2 pull origin &&
+        GIT_NO_LAZY_FETCH=0 git -C client2 pull origin &&
 
-	git -C client2 rev-parse HEAD >actual &&
-	test_cmp expected_head actual &&
+        git -C client2 rev-parse HEAD >actual &&
+        test_cmp expected_head actual &&
 
-	cat client2/bar >/dev/null &&
+        cat client2/bar >/dev/null &&
 
-	check_missing_objects server 1 "$oid"
+        check_missing_objects server 1 "$oid"
+'
+
+test_expect_success LOP_GCOV 'coverage: promisor advertisement helpers executed' '
+        lop_assert_gcov_functions promisor-remote.c \
+                reset_advertised_filters \
+                record_advertised_filter \
+                promisor_remote_advertised_filter \
+                parse_one_advertised_remote \
+                all_fields_match \
+                should_accept_remote
 '
 
 test_done

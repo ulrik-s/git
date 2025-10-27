@@ -37,8 +37,11 @@
 #include "sigchain.h"
 #include "branch.h"
 #include "remote.h"
+#include "promisor-remote.h"
 #include "run-command.h"
 #include "setup.h"
+#include "connect.h"
+#include "url.h"
 #include "connected.h"
 #include "packfile.h"
 #include "path.h"
@@ -81,8 +84,60 @@ static struct list_objects_filter_options filter_options = LIST_OBJECTS_FILTER_I
 static int config_filter_submodules = -1;    /* unspecified */
 static int option_remote_submodules;
 
+static char *extract_promisor_filter(const char *info)
+{
+        struct string_list entries = STRING_LIST_INIT_DUP;
+        struct string_list_item *entry;
+        char *result = NULL;
+
+        if (!info || !*info)
+                return NULL;
+
+        string_list_split(&entries, info, ";", -1);
+
+        for_each_string_list_item(entry, &entries) {
+                struct string_list pairs = STRING_LIST_INIT_DUP;
+                struct string_list_item *pair;
+                char *filter_value = NULL;
+
+                string_list_split(&pairs, entry->string, ",", -1);
+
+                for_each_string_list_item(pair, &pairs) {
+                        const char *value;
+
+                        if (!skip_prefix(pair->string, "partialCloneFilter=", &value))
+                                continue;
+
+                        filter_value = url_percent_decode(value);
+                        break;
+                }
+
+                string_list_clear(&pairs, 0);
+
+                if (!filter_value)
+                        continue;
+
+                if (!result) {
+                        result = filter_value;
+                } else {
+                        if (strcmp(result, filter_value)) {
+                                free(filter_value);
+                                free(result);
+                                result = NULL;
+                                break;
+                        }
+
+                        free(filter_value);
+                }
+        }
+
+        string_list_clear(&entries, 0);
+
+        return result;
+}
+
 static int recurse_submodules_cb(const struct option *opt,
-				 const char *arg, int unset)
+                                 const char *arg, int unset)
 {
 	if (unset)
 		string_list_clear((struct string_list *)opt->value, 0);
@@ -1433,12 +1488,44 @@ int cmd_clone(int argc,
 	if (opts.wants_head || transport_ls_refs_options.ref_prefixes.nr == 0)
 		strvec_push(&transport_ls_refs_options.ref_prefixes, "HEAD");
 
-	refs = transport_get_remote_refs(transport, &transport_ls_refs_options);
+        refs = transport_get_remote_refs(transport, &transport_ls_refs_options);
 
-	/*
-	 * Now that we know what algorithm the remote side is using, let's set
-	 * ours to the same thing.
-	 */
+        if (!filter_options.choice) {
+                const char *server_filter = promisor_remote_advertised_filter();
+                char *parsed_filter = NULL;
+
+                if (!server_filter) {
+                        const char *advertised_info;
+
+                        if (server_feature_v2("promisor-remote", &advertised_info))
+                                parsed_filter = extract_promisor_filter(advertised_info);
+                        server_filter = parsed_filter;
+                }
+
+                if (server_filter) {
+                        const char *spec;
+
+                        parse_list_objects_filter(&filter_options, server_filter);
+                        spec = expand_list_objects_filter_spec(&filter_options);
+
+                        transport_set_option(transport,
+                                             TRANS_OPT_LIST_OBJECTS_FILTER,
+                                             spec);
+                        transport_set_option(transport,
+                                             TRANS_OPT_FROM_PROMISOR,
+                                             "1");
+                        if (transport->smart_options)
+                                transport->smart_options->check_self_contained_and_connected = 0;
+
+                }
+
+                free(parsed_filter);
+        }
+
+        /*
+         * Now that we know what algorithm the remote side is using, let's set
+         * ours to the same thing.
+         */
 	hash_algo = hash_algo_by_ptr(transport_get_hash_algo(transport));
 	initialize_repository_version(hash_algo, the_repository->ref_storage_format, 1);
 	repo_set_hash_algo(the_repository, hash_algo);

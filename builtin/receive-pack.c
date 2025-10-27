@@ -34,6 +34,7 @@
 #include "object-file.h"
 #include "object-name.h"
 #include "odb.h"
+#include "promisor-odb.h"
 #include "path.h"
 #include "protocol.h"
 #include "commit-reach.h"
@@ -43,6 +44,7 @@
 #include "worktree.h"
 #include "shallow.h"
 #include "parse-options.h"
+#include "wildmatch.h"
 
 static const char * const receive_pack_usage[] = {
 	N_("git receive-pack <git-dir>"),
@@ -95,6 +97,191 @@ static struct signature_check sigcheck;
 static const char *push_cert_nonce;
 static char *cert_nonce_seed;
 static struct strvec hidden_refs = STRVEC_INIT;
+struct lop_blob_info {
+	struct object_id oid;
+	const char *path;
+	uintmax_t size;
+};
+
+struct lop_route_rule {
+	char *remote;
+	uintmax_t size_above;
+	unsigned int has_size:1;
+	struct string_list includes;
+};
+
+struct lop_policy {
+	int enabled;
+	uintmax_t size_above;
+	unsigned int has_size:1;
+	struct string_list paths;
+	struct string_list routes;
+};
+
+static int lop_policy_initialized;
+static struct lop_policy lop_policy;
+
+static void lop_policy_init(struct lop_policy *policy)
+{
+	memset(policy, 0, sizeof(*policy));
+	string_list_init_dup(&policy->paths);
+	string_list_init_dup(&policy->routes);
+}
+
+static void lop_policy_ensure_init(void)
+{
+	if (!lop_policy_initialized) {
+		lop_policy_init(&lop_policy);
+		lop_policy_initialized = 1;
+	}
+}
+
+static struct lop_route_rule *lop_policy_get_route(struct lop_policy *policy,
+				    const char *name)
+{
+	struct lop_route_rule *rule;
+	struct string_list_item *item;
+	int i;
+
+	for (i = 0; i < policy->routes.nr; i++)
+		if (!strcmp(policy->routes.items[i].string, name))
+			return policy->routes.items[i].util;
+
+	item = string_list_append(&policy->routes, name);
+	rule = xcalloc(1, sizeof(*rule));
+	string_list_init_dup(&rule->includes);
+	item->util = rule;
+	return rule;
+}
+
+static void lop_route_rule_add_includes(struct lop_route_rule *rule,
+				       const char *value)
+{
+	struct string_list values = STRING_LIST_INIT_DUP;
+	int i;
+
+	string_list_split_f(&values, value, ",", -1,
+				   STRING_LIST_SPLIT_TRIM |
+				   STRING_LIST_SPLIT_NONEMPTY);
+	for (i = 0; i < values.nr; i++)
+		string_list_append(&rule->includes, values.items[i].string);
+	string_list_clear(&values, 0);
+}
+
+static int lop_match_patterns(const struct string_list *patterns,
+			       const char *value)
+{
+	int i;
+
+	if (!patterns->nr)
+		return 1;
+	if (!value)
+		return 0;
+	for (i = 0; i < patterns->nr; i++)
+		if (!wildmatch(patterns->items[i].string, value, WM_PATHNAME))
+			return 1;
+	return 0;
+}
+
+static int lop_route_matches(const struct lop_route_rule *rule,
+			       const struct lop_blob_info *blob)
+{
+	if (!rule->remote)
+		return 0;
+	if (rule->has_size && blob->size < rule->size_above)
+		return 0;
+	return lop_match_patterns(&rule->includes, blob->path);
+}
+
+static int lop_policy_should_consider(const struct lop_policy *policy,
+				       const struct lop_blob_info *blob)
+{
+	int i;
+
+	if (!policy->enabled)
+		return 0;
+	if (policy->has_size && blob->size >= policy->size_above)
+		return 1;
+	if (policy->paths.nr && lop_match_patterns(&policy->paths, blob->path))
+		return 1;
+	if (!policy->has_size && !policy->paths.nr)
+		return 1;
+	for (i = 0; i < policy->routes.nr; i++)
+		if (lop_route_matches(policy->routes.items[i].util, blob))
+			return 1;
+	return 0;
+}
+
+static const char *lop_match_blob(const struct lop_policy *policy,
+				    const struct lop_blob_info *blob)
+{
+	int i;
+
+	if (!lop_policy_should_consider(policy, blob))
+		return NULL;
+	for (i = 0; i < policy->routes.nr; i++) {
+		struct lop_route_rule *rule = policy->routes.items[i].util;
+		if (lop_route_matches(rule, blob))
+			return rule->remote;
+	}
+	return NULL;
+}
+
+struct lop_offload_stats {
+        uintmax_t blob_count;
+        uintmax_t total_bytes;
+};
+
+struct lop_offload_ctx {
+        struct lop_policy *policy;
+        struct string_list stats;
+        struct strbuf err;
+        int had_error;
+};
+
+static int lop_remove_local_blob(const struct object_id *oid, struct strbuf *err)
+{
+        struct odb_source *source;
+
+        for (source = the_repository->objects->sources; source; source = source->next) {
+                struct strbuf path = STRBUF_INIT;
+                const char *loose_path;
+
+                if (!source->local)
+                        continue;
+
+                loose_path = odb_loose_path(source, &path, oid);
+                if (!loose_path) {
+                        strbuf_release(&path);
+                        continue;
+                }
+
+                if (!unlink(loose_path)) {
+                        const char *slash;
+                        struct strbuf dir = STRBUF_INIT;
+
+                        odb_clear_loose_cache(source);
+
+                        slash = strrchr(loose_path, '/');
+                        if (slash) {
+                                strbuf_add(&dir, loose_path, slash - loose_path);
+                                if (rmdir(dir.buf) && errno != ENOENT && errno != ENOTEMPTY)
+                                        warning_errno("failed to remove directory '%s'", dir.buf);
+                                strbuf_release(&dir);
+                        }
+                } else if (errno != ENOENT) {
+                        if (err)
+                                strbuf_addf(err, "failed to remove blob %s from local store: %s",
+                                            oid_to_hex(oid), strerror(errno));
+                        strbuf_release(&path);
+                        return -1;
+                }
+
+                strbuf_release(&path);
+        }
+
+        return 0;
+}
 
 static const char *NONCE_UNSOLICITED = "UNSOLICITED";
 static const char *NONCE_BAD = "BAD";
@@ -144,18 +331,80 @@ static enum deny_action parse_deny_action(const char *var, const char *value)
 }
 
 static int receive_pack_config(const char *var, const char *value,
-			       const struct config_context *ctx, void *cb)
+                               const struct config_context *ctx, void *cb)
 {
-	const char *msg_id;
-	int status = parse_hide_refs_config(var, value, "receive", &hidden_refs);
+        const char *msg_id;
+        const char *config_value = value;
+        int status = parse_hide_refs_config(var, value, "receive", &hidden_refs);
 
-	if (status)
-		return status;
+        if (status)
+                return status;
 
-	if (strcmp(var, "receive.denydeletes") == 0) {
-		deny_deletes = git_config_bool(var, value);
-		return 0;
-	}
+        if (!strcmp(var, "receive.lop.enable")) {
+                lop_policy_ensure_init();
+                lop_policy.enabled = git_config_bool(var, value);
+                return 0;
+        }
+
+        if (!strcmp(var, "receive.lop.sizeabove")) {
+                uintmax_t bytes = git_config_ulong(var, value, ctx->kvi);
+                lop_policy_ensure_init();
+                lop_policy.size_above = bytes;
+                lop_policy.has_size = 1;
+                return 0;
+        }
+
+        if (!strcmp(var, "receive.lop.path")) {
+                if (!value)
+                        return config_error_nonbool(var);
+                lop_policy_ensure_init();
+                string_list_append(&lop_policy.paths, value);
+                return 0;
+        }
+
+        if (skip_prefix(var, "lop.route.", &value)) {
+                const char *lop_section = value;
+                const char *key = strchr(lop_section, '.');
+                char *route_name;
+                struct lop_route_rule *rule;
+
+                if (!key)
+                        return 0;
+
+                lop_policy_ensure_init();
+                route_name = xmemdupz(lop_section, key - lop_section);
+                rule = lop_policy_get_route(&lop_policy, route_name);
+                free(route_name);
+
+                if (!strcmp(key + 1, "remote")) {
+                        if (!config_value)
+                                return config_error_nonbool(var);
+                        free(rule->remote);
+                        rule->remote = xstrdup(config_value);
+                        return 0;
+                }
+
+                if (!strcmp(key + 1, "include")) {
+                        if (!config_value)
+                                return config_error_nonbool(var);
+                        lop_route_rule_add_includes(rule, config_value);
+                        return 0;
+                }
+
+                if (!strcmp(key + 1, "sizeAbove")) {
+                        uintmax_t bytes = git_config_ulong(var, config_value, ctx->kvi);
+                        rule->size_above = bytes;
+                        rule->has_size = 1;
+                        return 0;
+                }
+
+                return 0;
+        }
+
+        if (strcmp(var, "receive.denydeletes") == 0) {
+                deny_deletes = git_config_bool(var, value);
+                return 0;
+        }
 
 	if (strcmp(var, "receive.denynonfastforwards") == 0) {
 		deny_non_fast_forwards = git_config_bool(var, value);
@@ -392,9 +641,9 @@ struct command {
 
 static void proc_receive_ref_append(const char *prefix)
 {
-	struct proc_receive_ref *ref_pattern;
-	char *p;
-	int len;
+        struct proc_receive_ref *ref_pattern;
+        char *p;
+        int len;
 
 	CALLOC_ARRAY(ref_pattern, 1);
 	p = strchr(prefix, ':');
@@ -428,8 +677,239 @@ static void proc_receive_ref_append(const char *prefix)
 		end = proc_receive_ref;
 		while (end->next)
 			end = end->next;
-		end->next = ref_pattern;
-	}
+                end->next = ref_pattern;
+        }
+}
+
+static struct lop_offload_stats *lop_stats_get(struct string_list *list,
+                                              const char *remote)
+{
+        size_t i;
+
+        for (i = 0; i < list->nr; i++) {
+                if (!strcmp(list->items[i].string, remote))
+                        return list->items[i].util;
+        }
+
+        list->strdup_strings = 1;
+        string_list_append(list, remote);
+        list->items[list->nr - 1].util = xcalloc(1, sizeof(struct lop_offload_stats));
+        return list->items[list->nr - 1].util;
+}
+
+static void lop_stats_clear(struct string_list *list)
+{
+        size_t i;
+
+        for (i = 0; i < list->nr; i++)
+                free(list->items[i].util);
+        string_list_clear(list, 0);
+}
+
+static int lop_record_blob(struct lop_offload_ctx *ctx,
+                           const struct lop_blob_info *blob,
+                           const char *remote,
+                           size_t size)
+{
+        struct lop_offload_stats *stats;
+
+        stats = lop_stats_get(&ctx->stats, remote);
+        stats->blob_count++;
+        stats->total_bytes += size;
+
+        if (blob->path)
+                trace2_data_string("lop/match", the_repository, "path", blob->path);
+        trace2_data_string("lop/match", the_repository, "remote", remote);
+        trace2_data_intmax("lop/match", the_repository, "size", size);
+        return 0;
+}
+
+static int lop_offload_blob_cb(const struct lop_blob_info *blob, void *data)
+{
+        struct lop_offload_ctx *ctx = data;
+        const char *remote_name;
+        struct lop_odb *odb;
+        struct object_info oi = OBJECT_INFO_INIT;
+        enum object_type type;
+        unsigned long size = 0;
+        char *buffer = NULL;
+        struct strbuf err = STRBUF_INIT;
+
+        remote_name = lop_match_blob(ctx->policy, blob);
+        if (!remote_name)
+                return 0;
+
+        oi.typep = &type;
+        oi.sizep = &size;
+        oi.contentp = (void **)&buffer;
+        if (odb_read_object_info_extended(the_repository->objects, &blob->oid, &oi,
+                                          OBJECT_INFO_LOOKUP_REPLACE |
+                                          OBJECT_INFO_DIE_IF_CORRUPT)) {
+                strbuf_addf(&ctx->err, "unable to read blob %s",
+                            oid_to_hex(&blob->oid));
+                ctx->had_error = 1;
+                goto fail;
+        }
+
+        if (type != OBJ_BLOB)
+                goto out;
+
+        odb = lop_odb_get(remote_name, &err);
+        if (!odb) {
+                strbuf_addbuf(&ctx->err, &err);
+                ctx->had_error = 1;
+                goto fail;
+        }
+
+        if (lop_odb_write_blob(odb, &blob->oid, buffer, size, &err)) {
+                strbuf_addbuf(&ctx->err, &err);
+                ctx->had_error = 1;
+                goto fail;
+        }
+
+        if (lop_remove_local_blob(&blob->oid, &ctx->err)) {
+                ctx->had_error = 1;
+                goto fail;
+        }
+
+        lop_record_blob(ctx, blob, remote_name, size);
+
+out:
+        free(buffer);
+        strbuf_release(&err);
+        return 0;
+fail:
+        free(buffer);
+        strbuf_release(&err);
+        return -1;
+}
+
+static int lop_for_each_new_blob(struct command *commands,
+                                 int (*cb)(const struct lop_blob_info *, void *),
+                                 void *data)
+{
+        struct command *cmd;
+        struct oidset seen = OIDSET_INIT;
+        struct strbuf line = STRBUF_INIT;
+
+        for (cmd = commands; cmd; cmd = cmd->next) {
+                struct child_process cp = CHILD_PROCESS_INIT;
+                struct strbuf range = STRBUF_INIT;
+                FILE *out;
+
+                if (cmd->skip_update)
+                        continue;
+                if (is_null_oid(&cmd->new_oid))
+                        continue;
+
+                cp.git_cmd = 1;
+                cp.out = -1;
+                strvec_push(&cp.args, "rev-list");
+                strvec_push(&cp.args, "--objects");
+                if (!is_null_oid(&cmd->old_oid)) {
+                        strbuf_addf(&range, "%s..%s", oid_to_hex(&cmd->old_oid),
+                                    oid_to_hex(&cmd->new_oid));
+                        strvec_push(&cp.args, range.buf);
+                } else {
+                        strvec_push(&cp.args, oid_to_hex(&cmd->new_oid));
+                }
+
+                if (start_command(&cp)) {
+                        strbuf_release(&range);
+                        strbuf_release(&line);
+                        oidset_clear(&seen);
+                        return -1;
+                }
+
+                out = xfdopen(cp.out, "r");
+                while (strbuf_getline_lf(&line, out) != EOF) {
+                        struct lop_blob_info info;
+                        char *sep;
+                        struct object_info oi = OBJECT_INFO_INIT;
+                        enum object_type type;
+                        unsigned long size = 0;
+
+                        if (!line.len)
+                                continue;
+                        sep = strchr(line.buf, ' ');
+                        if (sep)
+                                *sep = '\0';
+                        if (get_oid_hex(line.buf, &info.oid))
+                                continue;
+                        if (oidset_insert(&seen, &info.oid))
+                                continue;
+
+                        oi.typep = &type;
+                        oi.sizep = &size;
+                        if (odb_read_object_info_extended(the_repository->objects,
+                                                          &info.oid, &oi,
+                                                          OBJECT_INFO_LOOKUP_REPLACE |
+                                                          OBJECT_INFO_DIE_IF_CORRUPT))
+                                continue;
+                        if (type != OBJ_BLOB)
+                                continue;
+
+                        info.size = size;
+                        info.path = sep ? sep + 1 : NULL;
+                        if (cb(&info, data)) {
+                                fclose(out);
+                                finish_command(&cp);
+                                strbuf_release(&range);
+                                strbuf_release(&line);
+                                oidset_clear(&seen);
+                                return -1;
+                        }
+                }
+
+                fclose(out);
+                finish_command(&cp);
+                strbuf_release(&range);
+        }
+
+        strbuf_release(&line);
+        oidset_clear(&seen);
+        return 0;
+}
+
+static void lop_process_push(struct command *commands)
+{
+        struct lop_offload_ctx ctx;
+        size_t i;
+
+        if (!lop_policy_initialized || !lop_policy.enabled)
+                return;
+
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.policy = &lop_policy;
+        string_list_init_dup(&ctx.stats);
+        strbuf_init(&ctx.err, 0);
+
+        if (lop_for_each_new_blob(commands, lop_offload_blob_cb, &ctx) ||
+            ctx.had_error) {
+                struct strbuf msg = STRBUF_INIT;
+
+                if (ctx.err.len)
+                        strbuf_addbuf(&msg, &ctx.err);
+                else
+                        strbuf_addstr(&msg, "lop offload failed");
+
+                lop_stats_clear(&ctx.stats);
+                strbuf_release(&ctx.err);
+                die("%s", msg.buf);
+        }
+
+        for (i = 0; i < ctx.stats.nr; i++) {
+                struct lop_offload_stats *stats = ctx.stats.items[i].util;
+                trace2_data_string("lop/offload", the_repository, "remote",
+                                   ctx.stats.items[i].string);
+                trace2_data_intmax("lop/offload", the_repository, "blob-count",
+                                   stats->blob_count);
+                trace2_data_intmax("lop/offload", the_repository, "total-bytes",
+                                   stats->total_bytes);
+        }
+
+        lop_stats_clear(&ctx.stats);
+        strbuf_release(&ctx.err);
 }
 
 static int proc_receive_ref_matches(struct command *cmd)
@@ -2674,9 +3154,11 @@ int cmd_receive_pack(int argc,
 			update_shallow_info(commands, &si, &ref);
 		}
 		use_keepalive = KEEPALIVE_ALWAYS;
-		execute_commands(commands, unpack_status, &si,
-				 &push_options);
-		delete_tempfile(&pack_lockfile);
+                execute_commands(commands, unpack_status, &si,
+                                 &push_options);
+                if (!unpack_status)
+                        lop_process_push(commands);
+                delete_tempfile(&pack_lockfile);
 		sigchain_push(SIGPIPE, SIG_IGN);
 		if (report_status_v2)
 			report_v2(commands, unpack_status);
