@@ -84,10 +84,42 @@ static struct list_objects_filter_options filter_options = LIST_OBJECTS_FILTER_I
 static int config_filter_submodules = -1;    /* unspecified */
 static int option_remote_submodules;
 
+static void accumulate_promisor_filter(const struct list_objects_filter_options *opts,
+                                      int *match_all, int *has_limit, uintmax_t *limit)
+{
+        size_t i;
+
+        switch (opts->choice) {
+        case LOFC_BLOB_NONE:
+                *match_all = 1;
+                return;
+        case LOFC_BLOB_LIMIT:
+                if (opts->blob_limit_value >= UINTMAX_MAX) {
+                        *match_all = 1;
+                        return;
+                }
+                if (!*has_limit || opts->blob_limit_value < *limit) {
+                        *has_limit = 1;
+                        *limit = opts->blob_limit_value;
+                }
+                return;
+        case LOFC_COMBINE:
+                for (i = 0; i < opts->sub_nr; i++)
+                        accumulate_promisor_filter(&opts->sub[i], match_all,
+                                                    has_limit, limit);
+                return;
+        default:
+                return;
+        }
+}
+
 static char *extract_promisor_filter(const char *info)
 {
         struct string_list entries = STRING_LIST_INIT_DUP;
         struct string_list_item *entry;
+        int match_all = 0;
+        int has_limit = 0;
+        uintmax_t limit = 0;
         char *result = NULL;
 
         if (!info || !*info)
@@ -114,24 +146,30 @@ static char *extract_promisor_filter(const char *info)
 
                 string_list_clear(&pairs, 0);
 
-                if (!filter_value)
-                        continue;
+                if (filter_value) {
+                        struct list_objects_filter_options opts = LIST_OBJECTS_FILTER_INIT;
+                        struct strbuf err = STRBUF_INIT;
 
-                if (!result) {
-                        result = filter_value;
-                } else {
-                        if (strcmp(result, filter_value)) {
-                                free(filter_value);
-                                free(result);
-                                result = NULL;
-                                break;
-                        }
+                        if (!gently_parse_list_objects_filter(&opts, filter_value, &err))
+                                accumulate_promisor_filter(&opts, &match_all,
+                                                          &has_limit, &limit);
 
+                        strbuf_release(&err);
+                        list_objects_filter_release(&opts);
                         free(filter_value);
                 }
         }
 
         string_list_clear(&entries, 0);
+
+        if (match_all)
+                return xstrdup("blob:none");
+        if (has_limit) {
+                struct strbuf spec = STRBUF_INIT;
+
+                strbuf_addf(&spec, "blob:limit=%"PRIuMAX, limit);
+                result = strbuf_detach(&spec, NULL);
+        }
 
         return result;
 }

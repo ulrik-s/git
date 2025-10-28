@@ -59,46 +59,17 @@ receive.keepAlive::
         to 0 to disable keepalives entirely.
 
 receive.lop.enable::
-        Enable server-side offloading of large blobs to Large-Object
-        Promisor (LOP) repositories. When set to true, `receive-pack`
-        examines the blobs that arrive in a push and copies any that
-        match the configured offload policy to the target repositories
-        described by `lop.route`. Non-matching objects remain in
-        the local object database. Defaults to false.
-
-receive.lop.sizeAbove::
-        When `receive.lop.enable` is true, blobs whose size in bytes is
-        greater than or equal to this threshold are candidates for
-        offloading to a LOP repository. The value is a decimal size, and
-        supports the usual suffixes such as `k`, `m`, or `g`.
-
-receive.lop.path::
-        Additional path patterns that mark blobs as candidates for
-        offload. The value is a glob pattern matched with
-        `wildmatch(3)` using pathname semantics (so `**` matches across
-        directories). This option may be specified multiple times.
-
-lop.route::
-        Defines route-specific policies for offloading blobs to
-        different promisor repositories. Each route is identified by a
-        name and configured through the following keys:
-
-        - `lop.route.<name>.remote` names the promisor remote that
-          should receive blobs matched by the `<name>` route. The remote
-          must be configured locally and point at a repository that can
-          accept objects via the local filesystem (for example, a
-          `file://` URL).
-
-        - `lop.route.<name>.include` provides one or more
-          comma-separated glob patterns that further restrict which blob
-          paths are routed to the `<name>` remote. When omitted, the
-          route matches any blob selected by the global policy. This key
-          may be specified multiple times.
-
-        - `lop.route.<name>.sizeAbove` overrides `receive.lop.sizeAbove`
-          for the `<name>` route. Blobs must meet both the global policy
-          and this route-specific size threshold to be sent to the
-          associated remote.
+        Enable server-side offloading of blobs to Large-Object Promisor
+        (LOP) repositories. When set to true, `receive-pack` examines the
+        promisor remotes configured in the repository (for example via
+        `remote.<name>.promisor = true`) and uses their
+        `remote.<name>.partialCloneFilter` values to determine which
+        pushed blobs should be written to each LOP. Filters such as
+        `blob:none` and `blob:limit=<size>` follow the same semantics as
+        partial-clone negotiation: a `blob:none` promisor stores every
+        blob, while `blob:limit=<size>` captures blobs larger than the
+        advertised limit. Blobs that are not claimed by any promisor
+        remain in the primary repository. Defaults to false.
 
 receive.unpackLimit::
         If the number of objects received in a push is below this
@@ -164,19 +135,16 @@ receive.procReceiveRefs::
 	variable is not defined, the "proc-receive" hook will never be
 	used, and all commands will be executed by the internal
 	`execute_commands` function.
-+
 For example, if this variable is set to "refs/for", pushing to reference
 such as "refs/for/master" will not create or update a reference named
 "refs/for/master", but may create or update a pull request directly by
 running the hook "proc-receive".
-+
 Optional modifiers can be provided in the beginning of the value to filter
 commands for specific actions: create (a), modify (m), delete (d).
 A `!` can be included in the modifiers to negate the reference prefix entry.
 E.g.:
-+
-	git config --system --add receive.procReceiveRefs ad:refs/heads
-	git config --system --add receive.procReceiveRefs !:refs/heads
+        git config --system --add receive.procReceiveRefs ad:refs/heads
+        git config --system --add receive.procReceiveRefs !:refs/heads
 
 receive.updateServerInfo::
 	If set to true, git-receive-pack will run git-update-server-info

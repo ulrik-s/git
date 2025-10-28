@@ -38,25 +38,30 @@ git clone \
   filter and pulls missing blobs on demand from any configured promisor
   remote.
 - If a promisor is unreachable, fetch falls back gracefully (trees/commits always, blobs on-demand later).
+- When multiple promisors advertise different blob limits, the client adopts
+  the strictest (smallest) limit so that no blob which should live in a LOP is
+  downloaded eagerly during the initial clone.
 
 ### 2. Server-side offload on push
 
-When a client pushes a pack that contains blobs matching server policy (size/path/type rules), the server:
+When a client pushes a pack that contains blobs matching a promisor remote’s
+partial-clone filter, the server:
 
-1. Classifies those blobs with a filter-aware matcher.
-2. Writes them into the LOP ODB via the new ODB interface (plugin/aux ODB).
+1. Uses the advertised `remote.<name>.partialCloneFilter` values (for example
+   `blob:none` or `blob:limit=<size>`) to decide whether an incoming blob should
+   live in that LOP repository.
+2. Writes matching blobs into the LOP ODB via the new ODB interface
+   (plugin/aux ODB).
 3. Keeps trees/commits (and any non-matching blobs) locally.
-4. Records promisor metadata so downstream partial clones can retrieve those blobs from the LOP.
+4. Records promisor metadata so downstream partial clones can retrieve those
+   blobs from the LOP.
 
 **Policy sources (v1)**
 
-- Size thresholds: `receive.lop.sizeAbove = <bytes>`
-- Path filters: `receive.lop.path = prefix/**` (repeatable)
-- MIME/type hints (optional): `receive.lop.type = application/octet-stream` (repeatable)
-- Route mapping across multiple LOPs (first match wins):
-  - `lop.route.<name>.include = <glob>[, ...]`
-  - `lop.route.<name>.sizeAbove = <bytes>`
-  - `lop.route.<name>.remote = lopLarge|lopSmall|...`
+- Promisor remote filters: `remote.<name>.partialCloneFilter = blob:none`,
+  `blob:limit=<bytes>`, or other supported list-objects filters. The server
+  interprets the same filters it advertises to clients, so no bespoke policy
+  syntax is required.
 
 ### 3. Trace-verified data paths
 
@@ -79,20 +84,16 @@ We rely on packet and Trace2 to prove behavior in tests and in the field.
 **Server**
 
 - `receive.lop.enable = true`
-- `receive.lop.sizeAbove = 1048576` (example: >1 MiB)
-- `receive.lop.path = large/**` (repeatable)
 - `promisor.sendFields = partialCloneFilter`
-- `remote.<lop>.partialCloneFilter = blob:none`
-- `lop.route.<name>.remote = lopLarge`
-- `lop.route.<name>.include = *.iso,*.tar`
-- `lop.route.<name>.sizeAbove = 1048576`
+- `remote.<lop>.promisor = true`
+- `remote.<lop>.partialCloneFilter = blob:none|blob:limit=<size>`
 
-These keys are intentionally orthogonal: matching decides what is offloaded; routing decides where it goes.
+These are existing knobs: enabling LOPs simply causes `receive-pack` to obey
+the same promisor filters it already advertises to clients.
 
 ## Components (proposed file/map)
 
 - ODB integration: `promisor-odb.c`, `promisor-odb.h` (adapter to the new ODB interface for storing/serving offloaded blobs)
-- Routing/matcher: `lop-route.c` (`lop_match(blob) -> route|none`)
 - Server receive path hook-in: `receive-pack.c` (calls into lop/offload when `receive.lop.enable`)
 - Docs: `Documentation/technical/lop.txt`, `Documentation/config/lop.txt`
 - Tests: `t/t571x-lop-offload.sh`, `t/t571x-lop-multipromisor.sh`
@@ -111,8 +112,11 @@ We add end-to-end `sh` tests that set up:
    `filter blob:none`.
 2. On-demand blob fetch. Checkout forces missing blobs; trace shows `lop/router` picking correct promisor.
 3. Push offload by size. Push pack with >1 MiB blobs → server emits `lop/offload` and those blobs land in `lop-large.git`.
-4. Push offload by path. Blobs under `large/**` go to `lop-large`, others remain local.
-5. Multi-promisor routing. Mixed pack routes small but `"media/*"` blobs to `lop-small`, everything huge to `lop-large`.
+4. Mixed thresholds. Configure `remote.lopSmall.partialCloneFilter=blob:limit=1k` and
+   `remote.lopLarge.partialCloneFilter=blob:limit=1m`; verify mid-sized blobs
+   land in the small promisor while very large payloads route to the large one.
+5. Negative coverage. Offload disabled → server keeps everything local; traces
+   confirm no offload.
 6. Negative paths. Offload disabled → server keeps everything local; traces confirm no offload.
 7. Resilience. LOP temporarily unavailable → push is rejected with actionable error in server logs; no partial writes.
 

@@ -21,6 +21,7 @@
 #include "remote.h"
 #include "connect.h"
 #include "string-list.h"
+#include "strbuf.h"
 #include "oid-array.h"
 #include "connected.h"
 #include "strvec.h"
@@ -35,6 +36,7 @@
 #include "object-name.h"
 #include "odb.h"
 #include "promisor-odb.h"
+#include "promisor-remote.h"
 #include "path.h"
 #include "protocol.h"
 #include "commit-reach.h"
@@ -44,7 +46,7 @@
 #include "worktree.h"
 #include "shallow.h"
 #include "parse-options.h"
-#include "wildmatch.h"
+#include "list-objects-filter-options.h"
 
 static const char * const receive_pack_usage[] = {
 	N_("git receive-pack <git-dir>"),
@@ -104,18 +106,15 @@ struct lop_blob_info {
 };
 
 struct lop_route_rule {
-	char *remote;
-	uintmax_t size_above;
-	unsigned int has_size:1;
-	struct string_list includes;
+        char *remote;
+        uintmax_t size_above;
+        unsigned int has_size:1;
+        unsigned int match_all:1;
 };
 
 struct lop_policy {
-	int enabled;
-	uintmax_t size_above;
-	unsigned int has_size:1;
-	struct string_list paths;
-	struct string_list routes;
+        int enabled;
+        struct string_list routes;
 };
 
 static int lop_policy_initialized;
@@ -123,108 +122,169 @@ static struct lop_policy lop_policy;
 
 static void lop_policy_init(struct lop_policy *policy)
 {
-	memset(policy, 0, sizeof(*policy));
-	string_list_init_dup(&policy->paths);
-	string_list_init_dup(&policy->routes);
+        memset(policy, 0, sizeof(*policy));
+        string_list_init_dup(&policy->routes);
 }
 
 static void lop_policy_ensure_init(void)
 {
-	if (!lop_policy_initialized) {
-		lop_policy_init(&lop_policy);
-		lop_policy_initialized = 1;
-	}
+        if (!lop_policy_initialized) {
+                lop_policy_init(&lop_policy);
+                lop_policy_initialized = 1;
+        }
 }
 
-static struct lop_route_rule *lop_policy_get_route(struct lop_policy *policy,
-				    const char *name)
+static void lop_route_rule_free(void *util, const char *string UNUSED)
 {
-	struct lop_route_rule *rule;
-	struct string_list_item *item;
-	int i;
+        struct lop_route_rule *rule = util;
 
-	for (i = 0; i < policy->routes.nr; i++)
-		if (!strcmp(policy->routes.items[i].string, name))
-			return policy->routes.items[i].util;
+        if (!rule)
+                return;
 
-	item = string_list_append(&policy->routes, name);
-	rule = xcalloc(1, sizeof(*rule));
-	string_list_init_dup(&rule->includes);
-	item->util = rule;
-	return rule;
+        free(rule->remote);
+        free(rule);
 }
 
-static void lop_route_rule_add_includes(struct lop_route_rule *rule,
-				       const char *value)
+static void lop_route_rule_apply_filter(struct lop_route_rule *rule,
+                                        const struct list_objects_filter_options *opts)
 {
-	struct string_list values = STRING_LIST_INIT_DUP;
-	int i;
+        size_t i;
 
-	string_list_split_f(&values, value, ",", -1,
-				   STRING_LIST_SPLIT_TRIM |
-				   STRING_LIST_SPLIT_NONEMPTY);
-	for (i = 0; i < values.nr; i++)
-		string_list_append(&rule->includes, values.items[i].string);
-	string_list_clear(&values, 0);
+        switch (opts->choice) {
+        case LOFC_BLOB_NONE:
+                rule->match_all = 1;
+                break;
+        case LOFC_BLOB_LIMIT: {
+                uintmax_t limit = opts->blob_limit_value;
+
+                if (limit >= UINTMAX_MAX)
+                        rule->match_all = 1;
+                else {
+                        rule->has_size = 1;
+                        rule->size_above = limit;
+                }
+                break;
+        }
+        case LOFC_COMBINE:
+                for (i = 0; i < opts->sub_nr; i++)
+                        lop_route_rule_apply_filter(rule, &opts->sub[i]);
+                break;
+        default:
+                break;
+        }
 }
 
-static int lop_match_patterns(const struct string_list *patterns,
-			       const char *value)
+static void lop_route_rule_configure_from_filter(struct lop_route_rule *rule,
+                                                 const char *filter)
 {
-	int i;
+        struct list_objects_filter_options opts = LIST_OBJECTS_FILTER_INIT;
+        struct strbuf err = STRBUF_INIT;
 
-	if (!patterns->nr)
-		return 1;
-	if (!value)
-		return 0;
-	for (i = 0; i < patterns->nr; i++)
-		if (!wildmatch(patterns->items[i].string, value, WM_PATHNAME))
-			return 1;
-	return 0;
+        if (!filter)
+                return;
+
+        if (gently_parse_list_objects_filter(&opts, filter, &err)) {
+                strbuf_release(&err);
+                list_objects_filter_release(&opts);
+                return;
+        }
+
+        lop_route_rule_apply_filter(rule, &opts);
+
+        strbuf_release(&err);
+        list_objects_filter_release(&opts);
+}
+
+static void lop_policy_clear_routes(struct lop_policy *policy)
+{
+        string_list_clear_func(&policy->routes, lop_route_rule_free);
+        string_list_init_dup(&policy->routes);
+}
+
+static int lop_promisor_remote_enabled(const struct promisor_remote *remote)
+{
+        struct strbuf key = STRBUF_INIT;
+        int enabled;
+        int result = 0;
+
+        if (!remote)
+                return 0;
+
+        strbuf_addf(&key, "remote.%s.promisor", remote->name);
+        if (!repo_config_get_bool(the_repository, key.buf, &enabled)) {
+                result = enabled;
+                goto out;
+        }
+
+        if (the_repository->repository_format_partial_clone &&
+            !strcmp(remote->name, the_repository->repository_format_partial_clone))
+                result = 1;
+out:
+        strbuf_release(&key);
+        return result;
+}
+
+static void lop_policy_reload_routes(struct lop_policy *policy)
+{
+        struct promisor_remote *remote;
+
+        lop_policy_clear_routes(policy);
+
+        if (!policy->enabled)
+                return;
+
+        for (remote = repo_promisor_remote_find(the_repository, NULL);
+             remote;
+             remote = remote->next) {
+                struct lop_route_rule *rule;
+                struct string_list_item *item;
+
+                if (!lop_promisor_remote_enabled(remote))
+                        continue;
+                if (!remote->partial_clone_filter)
+                        continue;
+
+                rule = xcalloc(1, sizeof(*rule));
+                rule->remote = xstrdup(remote->name);
+                lop_route_rule_configure_from_filter(rule, remote->partial_clone_filter);
+                if (!rule->match_all && !rule->has_size) {
+                        free(rule->remote);
+                        free(rule);
+                        continue;
+                }
+
+                item = string_list_append(&policy->routes, remote->name);
+                item->util = rule;
+        }
 }
 
 static int lop_route_matches(const struct lop_route_rule *rule,
-			       const struct lop_blob_info *blob)
+                               const struct lop_blob_info *blob)
 {
-	if (!rule->remote)
-		return 0;
-	if (rule->has_size && blob->size < rule->size_above)
-		return 0;
-	return lop_match_patterns(&rule->includes, blob->path);
-}
-
-static int lop_policy_should_consider(const struct lop_policy *policy,
-				       const struct lop_blob_info *blob)
-{
-	int i;
-
-	if (!policy->enabled)
-		return 0;
-	if (policy->has_size && blob->size >= policy->size_above)
-		return 1;
-	if (policy->paths.nr && lop_match_patterns(&policy->paths, blob->path))
-		return 1;
-	if (!policy->has_size && !policy->paths.nr)
-		return 1;
-	for (i = 0; i < policy->routes.nr; i++)
-		if (lop_route_matches(policy->routes.items[i].util, blob))
-			return 1;
-	return 0;
+        if (!rule->remote)
+                return 0;
+        if (rule->match_all)
+                return 1;
+        if (!rule->has_size)
+                return 0;
+        if (blob->size < rule->size_above)
+                return 0;
+        return 1;
 }
 
 static const char *lop_match_blob(const struct lop_policy *policy,
-				    const struct lop_blob_info *blob)
+                                    const struct lop_blob_info *blob)
 {
-	int i;
+        int i;
 
-	if (!lop_policy_should_consider(policy, blob))
-		return NULL;
-	for (i = 0; i < policy->routes.nr; i++) {
-		struct lop_route_rule *rule = policy->routes.items[i].util;
-		if (lop_route_matches(rule, blob))
-			return rule->remote;
-	}
-	return NULL;
+        if (!policy->enabled)
+                return NULL;
+        for (i = 0; i < policy->routes.nr; i++) {
+                struct lop_route_rule *rule = policy->routes.items[i].util;
+                if (lop_route_matches(rule, blob))
+                        return rule->remote;
+        }
+        return NULL;
 }
 
 struct lop_offload_stats {
@@ -334,7 +394,6 @@ static int receive_pack_config(const char *var, const char *value,
                                const struct config_context *ctx, void *cb)
 {
         const char *msg_id;
-        const char *config_value = value;
         int status = parse_hide_refs_config(var, value, "receive", &hidden_refs);
 
         if (status)
@@ -343,61 +402,6 @@ static int receive_pack_config(const char *var, const char *value,
         if (!strcmp(var, "receive.lop.enable")) {
                 lop_policy_ensure_init();
                 lop_policy.enabled = git_config_bool(var, value);
-                return 0;
-        }
-
-        if (!strcmp(var, "receive.lop.sizeabove")) {
-                uintmax_t bytes = git_config_ulong(var, value, ctx->kvi);
-                lop_policy_ensure_init();
-                lop_policy.size_above = bytes;
-                lop_policy.has_size = 1;
-                return 0;
-        }
-
-        if (!strcmp(var, "receive.lop.path")) {
-                if (!value)
-                        return config_error_nonbool(var);
-                lop_policy_ensure_init();
-                string_list_append(&lop_policy.paths, value);
-                return 0;
-        }
-
-        if (skip_prefix(var, "lop.route.", &value)) {
-                const char *lop_section = value;
-                const char *key = strchr(lop_section, '.');
-                char *route_name;
-                struct lop_route_rule *rule;
-
-                if (!key)
-                        return 0;
-
-                lop_policy_ensure_init();
-                route_name = xmemdupz(lop_section, key - lop_section);
-                rule = lop_policy_get_route(&lop_policy, route_name);
-                free(route_name);
-
-                if (!strcmp(key + 1, "remote")) {
-                        if (!config_value)
-                                return config_error_nonbool(var);
-                        free(rule->remote);
-                        rule->remote = xstrdup(config_value);
-                        return 0;
-                }
-
-                if (!strcmp(key + 1, "include")) {
-                        if (!config_value)
-                                return config_error_nonbool(var);
-                        lop_route_rule_add_includes(rule, config_value);
-                        return 0;
-                }
-
-                if (!strcmp(key + 1, "sizeAbove")) {
-                        uintmax_t bytes = git_config_ulong(var, config_value, ctx->kvi);
-                        rule->size_above = bytes;
-                        rule->has_size = 1;
-                        return 0;
-                }
-
                 return 0;
         }
 
@@ -877,6 +881,10 @@ static void lop_process_push(struct command *commands)
         size_t i;
 
         if (!lop_policy_initialized || !lop_policy.enabled)
+                return;
+
+        lop_policy_reload_routes(&lop_policy);
+        if (!lop_policy.routes.nr)
                 return;
 
         memset(&ctx, 0, sizeof(ctx));
