@@ -72,11 +72,12 @@ reset_client_to_base () {
 write_large_commit () {
     char=${1:-A}
     msg=${2:-"large payload"}
+    size=${3:-1048576}
 
     (
         cd client &&
         mkdir -p large &&
-        test-tool genrandom "$char" 2048 >large/blob.bin &&
+        test-tool genrandom "$char" "$size" >large/blob.bin &&
         git add large/blob.bin &&
         git commit -m "$msg"
     )
@@ -104,6 +105,19 @@ write_small_commit () {
         mkdir -p small &&
         test-tool genrandom "$char" 64 >small/blob.bin &&
         git add small/blob.bin &&
+        git commit -m "$msg"
+    )
+}
+
+write_mixed_commit () {
+    msg=${1:-"mixed payload"}
+
+    (
+        cd client &&
+        mkdir -p large small &&
+        test-tool genrandom M 1048576 >large/blob.bin &&
+        test-tool genrandom m 64 >small/blob.bin &&
+        git add large/blob.bin small/blob.bin &&
         git commit -m "$msg"
     )
 }
@@ -144,7 +158,25 @@ cleanup_trace () {
 }
 
 pack_size_kib () {
-    git -C "$1" count-objects -v | sed -n 's/^size-pack: //p'
+    git -C "$1" count-objects -v |
+    awk '
+        /^size-pack:/ { pack = $2 }
+        /^size:/ { loose = $2 }
+        END {
+            if (pack == "")
+                pack = 0;
+            if (loose == "")
+                loose = 0;
+            printf "%d\n", pack + loose;
+        }
+    '
+}
+
+record_repo_size () {
+    repo=$1
+    var=$2
+    size=$(pack_size_kib "$repo") || return 1
+    eval "$var=$size"
 }
 
 trace_has_remote () {
@@ -215,6 +247,25 @@ test_expect_success 'push keeps small blob local' '
     verify_blob_missing lop-large.git "$small_oid" &&
     verify_blob_missing lop-small.git "$small_oid" &&
     trace_lacks_offload "$trace"
+'
+
+test_expect_success 'push with mixed payload offloads large blob only' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_mixed_commit &&
+    large_oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    small_oid=$(git -C client rev-parse HEAD:small/blob.bin) &&
+    trace=$PWD/trace-mixed.json &&
+    test_when_finished "cleanup_trace $trace" &&
+    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$large_oid" &&
+    verify_blob_missing lop-small.git "$large_oid" &&
+    verify_blob_missing server.git "$large_oid" &&
+    verify_blob_in_repo server.git "$small_oid" &&
+    verify_blob_missing lop-large.git "$small_oid" &&
+    verify_blob_missing lop-small.git "$small_oid" &&
+    trace_has_remote "$trace" lopLarge &&
+    trace_has_stat "$trace" blob-count 1
 '
 
 test_expect_success 'push routes medium blob to lopSmall' '
@@ -344,6 +395,76 @@ test_expect_success 'push keeps blob when no promisor configured' '
     git -C server.git config --replace-all remote.lopSmall.promisor true
 '
 
+test_expect_success 'push reuses existing LOP blob without rewrite' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit M "lop reuse" &&
+    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    git -C client push origin HEAD:main &&
+    (
+        cd client &&
+        git checkout -B reuse baseline &&
+        mkdir -p large &&
+        git cat-file blob "$blob" >large/blob.bin &&
+        git add large/blob.bin &&
+        git commit -m "reuse existing large blob"
+    ) &&
+    test_when_finished "git -C client push origin :refs/heads/reuse" &&
+    test_when_finished "git -C client branch -D reuse 2>/dev/null || :" &&
+    trace=$PWD/trace-reuse.json &&
+    test_when_finished "cleanup_trace $trace" &&
+    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:reuse &&
+    verify_blob_in_repo lop-large.git "$blob"
+'
+
+test_expect_success 'push fails when promisor path missing' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    git -C server.git config --replace-all remote.lopLarge.url "file://$(pwd)/missing-lop.git" &&
+    write_large_commit N "missing promisor" &&
+    test_must_fail git -C client push origin HEAD:main &&
+    git -C server.git config --replace-all remote.lopLarge.url "file://$(pwd)/lop-large.git"
+'
+
+test_expect_success 'push fails when promisor repository uses different hash' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit O "hash mismatch" &&
+    git init --bare --object-format=sha256 lop-hash.git &&
+    git -C lop-hash.git config uploadpack.allowFilter true &&
+    git -C lop-hash.git config uploadpack.allowAnySHA1InWant true &&
+    test_when_finished "rm -rf lop-hash.git" &&
+    git -C server.git config --replace-all remote.lopLarge.url "file://$(pwd)/lop-hash.git" &&
+    test_when_finished "git -C server.git config --replace-all remote.lopLarge.url \"file://$(pwd)/lop-large.git\"" &&
+    test_must_fail git -C client push origin HEAD:main
+'
+
+test_expect_success 'clone handles combined promisor filters from server' '
+    reset_server_policy &&
+    reset_promisor_advertisement &&
+    git -C server.git config promisor.sendFields partialCloneFilter &&
+    git -C server.git config remote.lopLarge.partialclonefilter "combine:blob:none+tree:0" &&
+    test_when_finished "lop_set_filters \"blob:limit=1024\" \"blob:limit=256\"" &&
+    trace=$PWD/clone-combine.pkt &&
+    test_when_finished "rm -f $trace" &&
+    GIT_NO_LAZY_FETCH=0 GIT_TRACE_PACKET=$trace git clone --no-checkout "file://$(pwd)/server.git" clone-combine &&
+    test_grep "filter blob:none" "$trace" &&
+    rm -rf clone-combine
+'
+
+test_expect_success 'clone ignores non-blob promisor filters from server' '
+    reset_server_policy &&
+    reset_promisor_advertisement &&
+    git -C server.git config promisor.sendFields partialCloneFilter &&
+    git -C server.git config remote.lopLarge.partialclonefilter "tree:0" &&
+    test_when_finished "lop_set_filters \"blob:limit=1024\" \"blob:limit=256\"" &&
+    trace=$PWD/clone-tree.pkt &&
+    test_when_finished "rm -f $trace" &&
+    GIT_NO_LAZY_FETCH=0 GIT_TRACE_PACKET=$trace git clone --no-checkout "file://$(pwd)/server.git" clone-tree &&
+    test_grep "filter blob:limit=256" "$trace" &&
+    rm -rf clone-tree
+'
+
 test_expect_success 'clone advertises promisor filters from server' '
     reset_server_policy &&
     reset_promisor_advertisement &&
@@ -368,27 +489,55 @@ test_expect_success 'clone lazily fetches large blob on demand' '
     rm -rf clone-lazy
 '
 
-test_expect_success 'partial clone saves disk compared to full clone' '
+test_expect_success 'end-to-end LOP turn-around flow shows disk savings' '
     reset_server_policy &&
     reset_promisor_advertisement &&
     reset_client_to_base &&
-    write_blob_commit big/binary.bin 1048576 M "disk demo" &&
-    git init --bare server-full.git &&
-    test_when_finished "rm -rf server-full.git" &&
-    git -C client push origin HEAD:main &&
-    git -C client push "file://$(pwd)/server-full.git" HEAD:main &&
-    GIT_NO_LAZY_FETCH=0 git clone --no-checkout "file://$(pwd)/server.git" clone-lop &&
-    git clone --no-checkout "file://$(pwd)/server-full.git" clone-full &&
-    lop_pack=$(pack_size_kib clone-lop) &&
-    full_pack=$(pack_size_kib clone-full) &&
-    test -n "$lop_pack" && test -n "$full_pack" &&
-    test "$(expr "$lop_pack" + 0)" -lt "$(expr "$full_pack" + 0)" &&
-    rm -rf clone-lop clone-full
+    record_repo_size server.git server_before &&
+    record_repo_size lop-large.git lop_large_before &&
+    test_when_finished "git -C client push origin :refs/heads/assets" &&
+    test_when_finished "git -C client branch -D assets 2>/dev/null || :" &&
+    (
+        cd client &&
+        git checkout -B assets baseline &&
+        mkdir -p large &&
+        test-tool genrandom N 1048576 >large/asset.bin &&
+        git add large/asset.bin &&
+        git commit -m "assets payload" &&
+        git push origin HEAD:refs/heads/assets &&
+        git checkout main
+    ) &&
+    asset_oid=$(git -C client rev-parse assets:large/asset.bin) &&
+    record_repo_size server.git server_after &&
+    record_repo_size lop-large.git lop_large_after &&
+    printf "server before push: %s\n" "$server_before" &&
+    printf "server after push: %s\n" "$server_after" &&
+    printf "lop-large after push: %s\n" "$lop_large_after" &&
+    verify_blob_in_repo lop-large.git "$asset_oid" &&
+    verify_blob_missing server.git "$asset_oid" &&
+    test $(($lop_large_after - $lop_large_before)) -gt 900 &&
+    test $(($server_after - $server_before)) -lt 200 &&
+    test_when_finished "rm -rf client-lop" &&
+    test_when_finished "rm -rf client-full" &&
+    GIT_NO_LAZY_FETCH=0 git clone "file://$(pwd)/server.git" client-lop &&
+    record_repo_size client-lop lop_client_size &&
+    printf "client-lop pack: %s\n" "$lop_client_size" &&
+    verify_blob_missing client-lop "$asset_oid" &&
+    GIT_NO_LAZY_FETCH=0 git clone "file://$(pwd)/server.git" client-full &&
+    git -C client-full checkout -b assets origin/assets &&
+    record_repo_size client-full full_client_size &&
+    printf "client-full pack after checkout: %s\n" "$full_client_size" &&
+    verify_blob_in_repo client-full "$asset_oid" &&
+    test $(($full_client_size - $lop_client_size)) -gt 900
 '
 
 test_expect_success LOP_GCOV 'coverage: promisor filter helpers executed' '
     lop_assert_gcov_functions builtin/clone.c \
-        extract_promisor_filter
+        extract_promisor_filter \
+        accumulate_promisor_filter &&
+    lop_assert_gcov_function_coverage builtin/clone.c 85 \
+        extract_promisor_filter \
+        accumulate_promisor_filter
 '
 
 test_expect_success LOP_GCOV 'coverage: lop receive-pack pipeline exercised' '
@@ -405,7 +554,34 @@ test_expect_success LOP_GCOV 'coverage: lop receive-pack pipeline exercised' '
         lop_record_blob \
         lop_offload_blob_cb \
         lop_for_each_new_blob \
+        lop_process_push &&
+    lop_assert_gcov_function_coverage builtin/receive-pack.c 85 \
+        lop_policy_init \
+        lop_policy_ensure_init \
+        lop_policy_reload_routes \
+        lop_route_rule_apply_filter \
+        lop_route_matches \
+        lop_match_blob \
+        lop_remove_local_blob \
+        lop_stats_get \
+        lop_stats_clear \
+        lop_record_blob \
+        lop_offload_blob_cb \
+        lop_for_each_new_blob \
         lop_process_push
+'
+
+test_expect_success LOP_GCOV 'coverage: promisor odb helpers exercised' '
+    lop_assert_gcov_functions promisor-odb.c \
+        lop_odb_create \
+        lop_odb_prepare_repo \
+        lop_odb_get \
+        lop_odb_write_blob &&
+    lop_assert_gcov_function_coverage promisor-odb.c 85 \
+        lop_odb_create \
+        lop_odb_prepare_repo \
+        lop_odb_get \
+        lop_odb_write_blob
 '
 
 # final cleanup

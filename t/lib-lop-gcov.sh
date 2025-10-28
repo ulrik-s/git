@@ -84,14 +84,38 @@ echo "$output"
 }
 
 lop_assert_gcov_functions() {
-file="$1"
-shift
-cov_file=$(lop__gcov_run "$file") || return 1
-for fn in "$@"
-do
+    file="$1"
+    shift
+    cov_file=$(lop__gcov_run "$file") || return 1
+    for fn in "$@"
+    do
         grep "^function $fn" "$cov_file" >"$TRASH_DIRECTORY/gcov/$fn.func" || return 1
         ! grep "^function $fn called 0" "$cov_file" || return 1
-done
+    done
+}
+
+lop_assert_gcov_function_coverage() {
+    file="$1"
+    min="$2"
+    shift 2
+    cov_file=$(lop__gcov_run "$file") || return 1
+    for fn in "$@"
+    do
+        percent=$(awk -v fn="$fn" '
+            $0 ~ "^function " fn " " {
+                for (i = 1; i <= NF; i++) {
+                    if ($i == "blocks" && $(i + 1) == "executed") {
+                        val = $(i + 2)
+                        sub(/%/, "", val)
+                        print val
+                        exit
+                    }
+                }
+            }
+        ' "$cov_file") || return 1
+        test -n "$percent" || return 1
+        awk -v p="$percent" -v min="$min" 'BEGIN { exit !(p + 0 >= min + 0) }'
+    done
 }
 
 fi

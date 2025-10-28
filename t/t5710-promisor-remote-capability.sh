@@ -454,6 +454,13 @@ test_expect_success LOP_GCOV 'coverage: promisor advertisement helpers executed'
                 promisor_remote_advertised_filter \
                 parse_one_advertised_remote \
                 all_fields_match \
+                should_accept_remote &&
+        lop_assert_gcov_function_coverage promisor-remote.c 85 \
+                reset_advertised_filters \
+                record_advertised_filter \
+                promisor_remote_advertised_filter \
+                parse_one_advertised_remote \
+                all_fields_match \
                 should_accept_remote
 '
 
