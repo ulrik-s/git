@@ -693,16 +693,19 @@ static int all_fields_match(struct promisor_info *advertised,
 }
 
 static int should_accept_remote(enum accept_promisor accept,
-				struct promisor_info *advertised,
-				struct string_list *config_info)
+                                struct promisor_info *advertised,
+                                struct string_list *config_info)
 {
-	struct promisor_info *p;
-	struct string_list_item *item;
-	const char *remote_name = advertised->name;
-	const char *remote_url = advertised->url;
+        struct promisor_info *p;
+        struct string_list_item *item;
+        const char *remote_name = advertised->name;
+        const char *remote_url = advertised->url;
 
-	if (accept == ACCEPT_ALL)
-		return all_fields_match(advertised, config_info, 1);
+        if (git_env_bool("GIT_TEST_LOP_FORCE_EMPTY_URL", 0))
+                remote_url = "";
+
+        if (accept == ACCEPT_ALL)
+                return all_fields_match(advertised, config_info, 1);
 
 	/* Get config info for that promisor remote */
 	item = string_list_lookup(config_info, remote_name);

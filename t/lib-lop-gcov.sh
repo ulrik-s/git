@@ -92,13 +92,13 @@ lop__gcov_find_function_line() {
     awk -v fn="$func" '
         $1 == "function" {
             name = $2
-            gsub(/['\''\"]/, "", name)
+            gsub(/["\047]/, "", name)
             if (name == fn) {
                 print $0
-                exit 0
+                found = 1
             }
         }
-        END { exit 1 }
+        END { exit !found }
     ' "$file"
 }
 

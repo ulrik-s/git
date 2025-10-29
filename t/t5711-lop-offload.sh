@@ -507,6 +507,27 @@ test_expect_success 'push fails when removing local blob fails' '
         git -C client push origin HEAD:main
 '
 
+test_expect_success 'push fails when removing local blob reports errno' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N9 "remove errno" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_REMOVE_ERROR=1 \
+        git -C client push origin HEAD:main
+'
+
+test_expect_success 'push warns when promisor directory cleanup fails' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N10 "remove warn" &&
+    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    err=$PWD/remove-warn.err &&
+    test_when_finished "rm -f $err" &&
+    env GIT_TEST_LOP_FORCE_REMOVE_DIR_WARN=1 git -C client push origin HEAD:main 2>"$err" &&
+    test_grep "failed to remove directory" "$err" &&
+    verify_blob_in_repo lop-large.git "$blob" &&
+    verify_blob_missing server.git "$blob"
+'
+
 test_expect_success 'push fails when promisor repository uses different hash' '
     reset_server_policy &&
     reset_client_to_base &&

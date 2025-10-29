@@ -299,6 +299,8 @@ struct lop_offload_ctx {
 static int lop_remove_local_blob(const struct object_id *oid, struct strbuf *err)
 {
         struct odb_source *source;
+        int force_error = git_env_bool("GIT_TEST_LOP_FORCE_REMOVE_ERROR", 0);
+        int force_dir_warn = git_env_bool("GIT_TEST_LOP_FORCE_REMOVE_DIR_WARN", 0);
 
         if (git_env_bool("GIT_TEST_LOP_FORCE_REMOVE_FAIL", 0)) {
                 if (err)
@@ -319,7 +321,16 @@ static int lop_remove_local_blob(const struct object_id *oid, struct strbuf *err
                         continue;
                 }
 
-                if (!unlink(loose_path)) {
+                int remove_result;
+
+                if (force_error) {
+                        errno = EACCES;
+                        remove_result = -1;
+                } else {
+                        remove_result = unlink(loose_path);
+                }
+
+                if (!remove_result) {
                         const char *slash;
                         struct strbuf dir = STRBUF_INIT;
 
@@ -328,11 +339,14 @@ static int lop_remove_local_blob(const struct object_id *oid, struct strbuf *err
                         slash = strrchr(loose_path, '/');
                         if (slash) {
                                 strbuf_add(&dir, loose_path, slash - loose_path);
-                                if (rmdir(dir.buf) && errno != ENOENT && errno != ENOTEMPTY)
+                                if (force_dir_warn) {
+                                        errno = EPERM;
+                                        warning_errno("failed to remove directory '%s'", dir.buf);
+                                } else if (rmdir(dir.buf) && errno != ENOENT && errno != ENOTEMPTY)
                                         warning_errno("failed to remove directory '%s'", dir.buf);
                                 strbuf_release(&dir);
                         }
-                } else if (errno != ENOENT) {
+                } else if (errno != ENOENT || force_error) {
                         if (err)
                                 strbuf_addf(err, "failed to remove blob %s from local store: %s",
                                             oid_to_hex(oid), strerror(errno));

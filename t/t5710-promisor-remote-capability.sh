@@ -439,6 +439,44 @@ test_expect_success LOP_GCOV "coverage: promisor capability missing url" '
                         "file://$(pwd)/server-missing-url" client-missing-url
 '
 
+test_expect_success LOP_GCOV "coverage: promisor check fields known name" '
+        lop_copy_for_coverage server-knowncheck &&
+        git -C server-knowncheck config promisor.sendFields "partialCloneFilter,token" &&
+        git -C server-knowncheck config remote.lop.token coverage-token &&
+        test_when_finished "rm -rf server-knowncheck server-knowncheck-lop client-knowncheck" &&
+        mkdir client-knowncheck &&
+        git -C client-knowncheck init &&
+        git -C client-knowncheck config promisor.acceptfromserver KnownName &&
+        git -C client-knowncheck config promisor.checkFields token &&
+        git -C client-knowncheck config remote.lop.promisor true &&
+        git -C client-knowncheck config remote.lop.fetch "+refs/heads/*:refs/remotes/lop/*" &&
+        git -C client-knowncheck config remote.lop.url "file://$(pwd)/server-knowncheck-lop" &&
+        git -C client-knowncheck config remote.lop.token coverage-token &&
+        git -C client-knowncheck config remote.origin.url "file://$(pwd)/server-knowncheck" &&
+        git -C client-knowncheck config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" &&
+        GIT_NO_LAZY_FETCH=0 git -C client-knowncheck fetch --filter="blob:limit=5k" origin
+'
+
+test_expect_success LOP_GCOV "coverage: promisor known-url mismatch warns" '
+        lop_copy_for_coverage server-urlwarn &&
+        test_when_finished "rm -rf server-urlwarn server-urlwarn-lop client-urlwarn" &&
+        err=$PWD/urlwarn.err &&
+        test_when_finished "rm -f $err" &&
+        env GIT_NO_LAZY_FETCH=0 git \
+                -c promisor.acceptfromserver=KnownUrl \
+                -c remote.lop.url="https://invalid.invalid/lop" \
+                clone "file://$(pwd)/server-urlwarn" client-urlwarn \
+                2>"$err"
+'
+
+test_expect_success LOP_GCOV "coverage: promisor known-url empty advert" '
+        lop_copy_for_coverage server-emptyenv &&
+        test_when_finished "rm -rf server-emptyenv server-emptyenv-lop client-emptyenv" &&
+        env GIT_TEST_LOP_FORCE_EMPTY_URL=1 GIT_NO_LAZY_FETCH=0 \
+                git clone -c promisor.acceptfromserver=KnownUrl \
+                        "file://$(pwd)/server-emptyenv" client-emptyenv
+'
+
 test_expect_success "clone with promisor.advertise set to 'true' but don't delete the client" '
         git -C server config promisor.advertise true &&
 
