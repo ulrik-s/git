@@ -465,6 +465,48 @@ test_expect_success 'push fails when promisor write is forced to fail' '
         git -C client push origin HEAD:main
 '
 
+test_expect_success 'push fails when promisor write reports generic error' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N4 "promisor write error" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_WRITE_ERROR=1 \
+        git -C client push origin HEAD:main
+'
+
+test_expect_success 'push fails when promisor write mismatches object id' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N5 "promisor write mismatch" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_WRITE_MISMATCH=1 \
+        git -C client push origin HEAD:main
+'
+
+test_expect_success 'push fails when promisor read is forced to fail' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N6 "promisor read failure" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_READ_FAIL=1 \
+        git -C client push origin HEAD:main
+'
+
+test_expect_success 'push keeps blob local when forced non-blob path' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N7 "forced non blob" &&
+    oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    env GIT_TEST_LOP_FORCE_NON_BLOB=1 git -C client push origin HEAD:main &&
+    verify_blob_in_repo server.git "$oid" &&
+    verify_blob_missing lop-large.git "$oid"
+'
+
+test_expect_success 'push fails when removing local blob fails' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N8 "remove failure" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_REMOVE_FAIL=1 \
+        git -C client push origin HEAD:main
+'
+
 test_expect_success 'push fails when promisor repository uses different hash' '
     reset_server_policy &&
     reset_client_to_base &&

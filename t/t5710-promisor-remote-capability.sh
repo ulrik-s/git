@@ -333,10 +333,10 @@ test_expect_success "clone with promisor.sendFields" '
 '
 
 test_expect_success "clone with promisor.checkFields" '
-	git -C server config promisor.advertise true &&
-	test_when_finished "rm -rf client" &&
+        git -C server config promisor.advertise true &&
+        test_when_finished "rm -rf client" &&
 
-	git -C server remote add otherLop "https://invalid.invalid"  &&
+        git -C server remote add otherLop "https://invalid.invalid"  &&
 	git -C server config remote.otherLop.token "fooBar" &&
 	git -C server config remote.otherLop.stuff "baz" &&
 	git -C server config remote.otherLop.partialCloneFilter "blob:limit=10k" &&
@@ -362,15 +362,88 @@ test_expect_success "clone with promisor.checkFields" '
 	test_grep "clone> promisor-remote=lop" trace &&
 	test_grep ! "clone> promisor-remote=lop;otherLop" trace &&
 
-	# Check that the largest object is still missing on the server
-	check_missing_objects server 1 "$oid"
+        # Check that the largest object is still missing on the server
+        check_missing_objects server 1 "$oid"
+'
+
+lop_copy_for_coverage () {
+        base=$1 &&
+        rm -rf "${base}" "${base}-lop" "${base}-client" &&
+        cp -r server "${base}" &&
+        cp -r lop "${base}-lop" &&
+        git -C "${base}" config promisor.advertise true &&
+        git -C "${base}" config promisor.sendFields partialCloneFilter &&
+        git -C "${base}" config remote.lop.url "file://$(pwd)/${base}-lop" &&
+        git -C "${base}-lop" config uploadpack.allowFilter true &&
+        git -C "${base}-lop" config uploadpack.allowAnySHA1InWant true
+}
+
+test_expect_success LOP_GCOV "coverage: promisor filter branch (no acceptance)" '
+        lop_copy_for_coverage server-cover &&
+        test_when_finished "rm -rf server-cover server-cover-lop client-noaccept" &&
+        GIT_TEST_LOP_FORCE_NO_ACCEPTANCE=1 GIT_NO_LAZY_FETCH=0 \
+                git clone -c promisor.acceptfromserver=All \
+                        "file://$(pwd)/server-cover" client-noaccept
+'
+
+test_expect_success LOP_GCOV "coverage: promisor filter branch (empty list)" '
+        lop_copy_for_coverage server-empty &&
+        test_when_finished "rm -rf server-empty server-empty-lop client-empty" &&
+        GIT_TEST_LOP_FORCE_EMPTY_FILTER=1 GIT_NO_LAZY_FETCH=0 \
+                git clone -c promisor.acceptfromserver=All \
+                        "file://$(pwd)/server-empty" client-empty
+'
+
+test_expect_success LOP_GCOV "coverage: promisor filter branch (mismatch)" '
+        lop_copy_for_coverage server-mismatch &&
+        test_when_finished "rm -rf server-mismatch server-mismatch-lop client-mismatch" &&
+        GIT_TEST_LOP_FORCE_MISMATCH_FILTER=1 GIT_NO_LAZY_FETCH=0 \
+                git clone -c promisor.acceptfromserver=All \
+                        "file://$(pwd)/server-mismatch" client-mismatch
+'
+
+test_expect_success LOP_GCOV "coverage: promisor token field acceptance" '
+        lop_copy_for_coverage server-token &&
+        git -C server-token config promisor.sendFields "partialCloneFilter,token" &&
+        git -C server-token config promisor.checkFields "partialCloneFilter,token" &&
+        git -C server-token config remote.lop.token coverage-token &&
+        test_when_finished "rm -rf server-token server-token-lop client-token" &&
+        GIT_NO_LAZY_FETCH=0 git clone -c promisor.acceptfromserver=KnownName \
+                "file://$(pwd)/server-token" client-token &&
+        git -C client-token config --get remote.origin.partialclonefilter >/dev/null
+'
+
+test_expect_success LOP_GCOV "coverage: promisor token url check" '
+        lop_copy_for_coverage server-token-url &&
+        git -C server-token-url config promisor.sendFields "partialCloneFilter,token" &&
+        git -C server-token-url config promisor.checkFields "partialCloneFilter,token" &&
+        git -C server-token-url config remote.lop.token coverage-token &&
+        test_when_finished "rm -rf server-token-url server-token-url-lop client-token-url" &&
+        GIT_NO_LAZY_FETCH=0 git clone -c promisor.acceptfromserver=KnownUrl \
+                "file://$(pwd)/server-token-url" client-token-url
+'
+
+test_expect_success LOP_GCOV "coverage: promisor capability invalid element" '
+        lop_copy_for_coverage server-invalid &&
+        test_when_finished "rm -rf server-invalid server-invalid-lop client-invalid" &&
+        GIT_TEST_LOP_FORCE_INVALID_CAPABILITY=1 GIT_NO_LAZY_FETCH=0 \
+                git clone -c promisor.acceptfromserver=All \
+                        "file://$(pwd)/server-invalid" client-invalid
+'
+
+test_expect_success LOP_GCOV "coverage: promisor capability missing url" '
+        lop_copy_for_coverage server-missing-url &&
+        test_when_finished "rm -rf server-missing-url server-missing-url-lop client-missing-url" &&
+        GIT_TEST_LOP_FORCE_MISSING_URL=1 GIT_NO_LAZY_FETCH=0 \
+                git clone -c promisor.acceptfromserver=All \
+                        "file://$(pwd)/server-missing-url" client-missing-url
 '
 
 test_expect_success "clone with promisor.advertise set to 'true' but don't delete the client" '
-	git -C server config promisor.advertise true &&
+        git -C server config promisor.advertise true &&
 
-	# Clone from server to create a client
-	GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
+        # Clone from server to create a client
+        GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
 		-c remote.lop.fetch="+refs/heads/*:refs/remotes/lop/*" \
 		-c remote.lop.url="file://$(pwd)/lop" \
 		-c promisor.acceptfromserver=All \

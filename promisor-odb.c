@@ -162,10 +162,14 @@ int lop_odb_write_blob(struct lop_odb *entry, const struct object_id *oid,
         return -1;
     }
 
-    if (write_object_file(source, data, size, OBJ_BLOB, &written, NULL, 0)) {
+    if (git_env_bool("GIT_TEST_LOP_FORCE_WRITE_ERROR", 0) ||
+        write_object_file(source, data, size, OBJ_BLOB, &written, NULL, 0)) {
         strbuf_addf(err, "failed to write blob to '%s'", entry->name);
         return -1;
     }
+
+    if (git_env_bool("GIT_TEST_LOP_FORCE_WRITE_MISMATCH", 0))
+        written.hash[0] ^= 0x1;
 
     if (!oideq(&written, oid)) {
         strbuf_addf(err, "lop remote '%s' stored blob with unexpected id", entry->name);

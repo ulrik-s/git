@@ -470,19 +470,58 @@ static void record_advertised_filter(const struct promisor_info *info)
 
 const char *promisor_remote_advertised_filter(void)
 {
-        if (!saw_advertised_acceptance)
-                return NULL;
+        int saved_acceptance = saw_advertised_acceptance;
+        size_t saved_nr = advertised_filters.nr;
+        char *saved_item = NULL;
+        char *forced_value = NULL;
+        int appended_item = 0;
+        const char *result;
 
-        if (!advertised_filters.nr)
-                return NULL;
+        if (git_env_bool("GIT_TEST_LOP_FORCE_NO_ACCEPTANCE", 0))
+                saw_advertised_acceptance = 0;
 
-        for (size_t i = 1; i < advertised_filters.nr; i++) {
-                if (strcmp(advertised_filters.items[i].string,
-                           advertised_filters.items[0].string))
-                        return NULL;
+        if (git_env_bool("GIT_TEST_LOP_FORCE_EMPTY_FILTER", 0))
+                advertised_filters.nr = 0;
+
+        if (git_env_bool("GIT_TEST_LOP_FORCE_MISMATCH_FILTER", 0) &&
+            advertised_filters.nr) {
+                if (advertised_filters.nr < 2) {
+                        string_list_append(&advertised_filters,
+                                           advertised_filters.items[0].string);
+                        appended_item = 1;
+                }
+                saved_item = advertised_filters.items[advertised_filters.nr - 1].string;
+                forced_value = xstrdup("git-test-lop-forced-mismatch");
+                advertised_filters.items[advertised_filters.nr - 1].string = forced_value;
         }
 
-        return advertised_filters.items[0].string;
+        if (!saw_advertised_acceptance)
+                result = NULL;
+        else if (!advertised_filters.nr)
+                result = NULL;
+        else {
+                result = advertised_filters.items[0].string;
+                for (size_t i = 1; i < advertised_filters.nr; i++) {
+                        if (strcmp(advertised_filters.items[i].string,
+                                   advertised_filters.items[0].string)) {
+                                result = NULL;
+                                break;
+                        }
+                }
+        }
+
+        if (saved_item) {
+                free(advertised_filters.items[advertised_filters.nr - 1].string);
+                advertised_filters.items[advertised_filters.nr - 1].string = saved_item;
+                if (appended_item)
+                        advertised_filters.nr--;
+        }
+
+        if (advertised_filters.nr != saved_nr)
+                advertised_filters.nr = saved_nr;
+        saw_advertised_acceptance = saved_acceptance;
+
+        return result ? advertised_filters.items[0].string : NULL;
 }
 
 static void set_one_field(struct promisor_info *p,
@@ -771,10 +810,15 @@ static void filter_promisor_remote(struct repository *repo,
 
 	/* Parse remote info received */
 
-	string_list_split(&remote_info, info, ";", -1);
+        string_list_split(&remote_info, info, ";", -1);
 
-	for_each_string_list_item(item, &remote_info) {
-		struct promisor_info *advertised;
+        if (git_env_bool("GIT_TEST_LOP_FORCE_INVALID_CAPABILITY", 0))
+                string_list_append(&remote_info, "invalid");
+        if (git_env_bool("GIT_TEST_LOP_FORCE_MISSING_URL", 0))
+                string_list_append(&remote_info, "name=lop-missing");
+
+        for_each_string_list_item(item, &remote_info) {
+                struct promisor_info *advertised;
 
 		advertised = parse_one_advertised_remote(item->string);
 

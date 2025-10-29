@@ -37,6 +37,7 @@
 #include "odb.h"
 #include "promisor-odb.h"
 #include "promisor-remote.h"
+#include "parse.h"
 #include "path.h"
 #include "protocol.h"
 #include "commit-reach.h"
@@ -261,15 +262,11 @@ static void lop_policy_reload_routes(struct lop_policy *policy)
 static int lop_route_matches(const struct lop_route_rule *rule,
                                const struct lop_blob_info *blob)
 {
-        if (!rule->remote)
-                return 0;
         if (rule->match_all)
                 return 1;
-        if (!rule->has_size)
+        if (rule->size_above && blob->size < rule->size_above)
                 return 0;
-        if (blob->size < rule->size_above)
-                return 0;
-        return 1;
+        return rule->has_size;
 }
 
 static const char *lop_match_blob(const struct lop_policy *policy,
@@ -302,6 +299,12 @@ struct lop_offload_ctx {
 static int lop_remove_local_blob(const struct object_id *oid, struct strbuf *err)
 {
         struct odb_source *source;
+
+        if (git_env_bool("GIT_TEST_LOP_FORCE_REMOVE_FAIL", 0)) {
+                if (err)
+                        strbuf_addf(err, "failed to remove blob %s from local store", oid_to_hex(oid));
+                return -1;
+        }
 
         for (source = the_repository->objects->sources; source; source = source->next) {
                 struct strbuf path = STRBUF_INIT;
@@ -743,6 +746,12 @@ static int lop_offload_blob_cb(const struct lop_blob_info *blob, void *data)
         if (!remote_name)
                 return 0;
 
+        if (git_env_bool("GIT_TEST_LOP_FORCE_READ_FAIL", 0)) {
+                strbuf_addf(&ctx->err, "unable to read blob %s", oid_to_hex(&blob->oid));
+                ctx->had_error = 1;
+                goto fail;
+        }
+
         oi.typep = &type;
         oi.sizep = &size;
         oi.contentp = (void **)&buffer;
@@ -754,6 +763,9 @@ static int lop_offload_blob_cb(const struct lop_blob_info *blob, void *data)
                 ctx->had_error = 1;
                 goto fail;
         }
+
+        if (git_env_bool("GIT_TEST_LOP_FORCE_NON_BLOB", 0))
+                type = OBJ_TREE;
 
         if (type != OBJ_BLOB)
                 goto out;
