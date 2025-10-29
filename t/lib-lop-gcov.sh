@@ -37,7 +37,8 @@ if lop__coverage_requested &&
    command -v gcov >/dev/null 2>&1 &&
    lop__coverage_has_artifacts builtin/clone.c &&
    lop__coverage_has_artifacts builtin/receive-pack.c &&
-   lop__coverage_has_artifacts promisor-remote.c
+   lop__coverage_has_artifacts promisor-remote.c &&
+   lop__coverage_has_artifacts promisor-odb.c
 then
 test_set_prereq LOP_GCOV
 fi
@@ -83,14 +84,34 @@ fi
 echo "$output"
 }
 
+lop__gcov_find_function_line() {
+    file="$1"
+    func="$2"
+    awk -v fn="$func" '
+        $1 == "function" {
+            name = $2
+            gsub(/['\"]/, "", name)
+            if (name == fn) {
+                print $0
+                exit 0
+            }
+        }
+        END { exit 1 }
+    ' "$file"
+}
+
 lop_assert_gcov_functions() {
     file="$1"
     shift
     cov_file=$(lop__gcov_run "$file") || return 1
     for fn in "$@"
     do
-        grep "^function $fn" "$cov_file" >"$TRASH_DIRECTORY/gcov/$fn.func" || return 1
-        ! grep "^function $fn called 0" "$cov_file" || return 1
+        line=$(lop__gcov_find_function_line "$cov_file" "$fn") || return 1
+        printf '%s\n' "$line" >"$TRASH_DIRECTORY/gcov/$fn.func"
+        case "$line" in
+        *"called 0"*)
+            return 1 ;;
+        esac
     done
 }
 
@@ -101,8 +122,9 @@ lop_assert_gcov_function_coverage() {
     cov_file=$(lop__gcov_run "$file") || return 1
     for fn in "$@"
     do
-        percent=$(awk -v fn="$fn" '
-            $0 ~ "^function " fn " " {
+        line=$(lop__gcov_find_function_line "$cov_file" "$fn") || return 1
+        percent=$(printf '%s\n' "$line" | awk '
+            {
                 for (i = 1; i <= NF; i++) {
                     if ($i == "blocks" && $(i + 1) == "executed") {
                         val = $(i + 2)
@@ -112,7 +134,7 @@ lop_assert_gcov_function_coverage() {
                     }
                 }
             }
-        ' "$cov_file") || return 1
+        ') || return 1
         test -n "$percent" || return 1
         awk -v p="$percent" -v min="$min" 'BEGIN { exit !(p + 0 >= min + 0) }'
     done
