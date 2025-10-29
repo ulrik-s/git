@@ -457,6 +457,14 @@ test_expect_success 'push fails when promisor object store is read-only' '
         git -C client push origin HEAD:main
 '
 
+test_expect_success 'push fails when promisor write is forced to fail' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N3 "promisor write failure" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_WRITE_FAIL=1 \
+        git -C client push origin HEAD:main
+'
+
 test_expect_success 'push fails when promisor repository uses different hash' '
     reset_server_policy &&
     reset_client_to_base &&

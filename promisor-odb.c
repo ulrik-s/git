@@ -152,8 +152,15 @@ int lop_odb_write_blob(struct lop_odb *entry, const struct object_id *oid,
     int status;
 
     status = lop_odb_prepare_source(entry, oid, &source, err);
-    if (status)
+    if (status < 0)
         return status;
+    if (status > 0)
+        return 0;
+
+    if (git_env_bool("GIT_TEST_LOP_FORCE_WRITE_FAIL", 0)) {
+        strbuf_addf(err, "failed to write blob to '%s'", entry->name);
+        return -1;
+    }
 
     if (write_object_file(source, data, size, OBJ_BLOB, &written, NULL, 0)) {
         strbuf_addf(err, "failed to write blob to '%s'", entry->name);
