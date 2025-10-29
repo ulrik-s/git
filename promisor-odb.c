@@ -11,6 +11,7 @@
 #include "strbuf.h"
 #include "transport.h"
 #include "url.h"
+#include "parse.h"
 
 struct lop_odb {
     struct lop_odb *next;
