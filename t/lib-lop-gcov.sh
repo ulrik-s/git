@@ -14,9 +14,9 @@ esac
 }
 
 lop__coverage_has_artifacts() {
-file="$1"
-dir=${file%/*}
-base=${file##*/}
+    file="$1"
+    dir=${file%/*}
+    base=${file##*/}
 if test "$dir" = "$file"
 then
 dir="."
@@ -26,15 +26,16 @@ if ! test_path_is_file "$GIT_BUILD_DIR/$dir/$stem.gcno"
 then
         return 1
 fi
-if ! test_path_is_file "$GIT_BUILD_DIR/$dir/$stem.gcda"
-then
-        return 1
-fi
-return 0
+    return 0
+}
+
+lop__gcov_tool_available() {
+    set -- ${GCOV:-gcov}
+    command -v "$1" >/dev/null 2>&1
 }
 
 if lop__coverage_requested &&
-   command -v gcov >/dev/null 2>&1 &&
+   lop__gcov_tool_available &&
    lop__coverage_has_artifacts builtin/clone.c &&
    lop__coverage_has_artifacts builtin/receive-pack.c &&
    lop__coverage_has_artifacts promisor-remote.c &&
@@ -69,19 +70,20 @@ if test ! -e "$TRASH_DIRECTORY/gcov/$file"
 then
         if test "$dir" != "."
         then
-                mkdir -p "$TRASH_DIRECTORY/gcov/$dir"
+            mkdir -p "$TRASH_DIRECTORY/gcov/$dir"
         fi
         ln -s "$GIT_SOURCE_DIR/$file" "$TRASH_DIRECTORY/gcov/$file" 2>/dev/null ||
         cp "$GIT_SOURCE_DIR/$file" "$TRASH_DIRECTORY/gcov/$file" 2>/dev/null ||
         true
-fi
-(
+    fi
+    (
         cd "$TRASH_DIRECTORY/gcov" &&
-        gcov --branch-probabilities --all-blocks \
-                --object-directory="$GIT_BUILD_DIR/$dir" \
-                "$GIT_SOURCE_DIR/$file" >/dev/null
-) || return 1
-echo "$output"
+        set -- ${GCOV:-gcov}
+        "$@" --branch-probabilities --all-blocks \
+            --object-directory="$GIT_BUILD_DIR/$dir" \
+            "$GIT_SOURCE_DIR/$file" >/dev/null
+    ) || return 1
+    echo "$output"
 }
 
 lop__gcov_find_function_line() {
@@ -90,7 +92,7 @@ lop__gcov_find_function_line() {
     awk -v fn="$func" '
         $1 == "function" {
             name = $2
-            gsub(/['\"]/, "", name)
+            gsub(/['\''\"]/, "", name)
             if (name == fn) {
                 print $0
                 exit 0

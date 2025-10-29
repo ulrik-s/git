@@ -268,6 +268,29 @@ test_expect_success 'push with mixed payload offloads large blob only' '
     trace_has_stat "$trace" blob-count 1
 '
 
+test_expect_success 'push offloads multiple large blobs to same promisor' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    (
+        cd client &&
+        mkdir -p large &&
+        test-tool genrandom P 1048576 >large/one.bin &&
+        test-tool genrandom Q 1048576 >large/two.bin &&
+        git add large/one.bin large/two.bin &&
+        git commit -m "double large payload"
+    ) &&
+    first_oid=$(git -C client rev-parse HEAD:large/one.bin) &&
+    second_oid=$(git -C client rev-parse HEAD:large/two.bin) &&
+    trace=$PWD/trace-double-large.json &&
+    test_when_finished "cleanup_trace $trace" &&
+    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$first_oid" &&
+    verify_blob_in_repo lop-large.git "$second_oid" &&
+    verify_blob_missing server.git "$first_oid" &&
+    verify_blob_missing server.git "$second_oid" &&
+    trace_has_stat "$trace" blob-count 2
+'
+
 test_expect_success 'push routes medium blob to lopSmall' '
     reset_server_policy &&
     reset_client_to_base &&
@@ -424,6 +447,14 @@ test_expect_success 'push fails when promisor path missing' '
     write_large_commit N "missing promisor" &&
     test_must_fail git -C client push origin HEAD:main &&
     git -C server.git config --replace-all remote.lopLarge.url "file://$(pwd)/lop-large.git"
+'
+
+test_expect_success 'push fails when promisor object store is read-only' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N2 "promisor read-only" &&
+    test_must_fail env GIT_TEST_LOP_FORCE_READONLY=1 \
+        git -C client push origin HEAD:main
 '
 
 test_expect_success 'push fails when promisor repository uses different hash' '

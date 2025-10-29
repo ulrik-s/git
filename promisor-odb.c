@@ -4,6 +4,7 @@
 #include "object-file.h"
 #include "odb.h"
 #include "path.h"
+#include "environment.h"
 #include "abspath.h"
 #include "remote.h"
 #include "repository.h"
@@ -107,14 +108,13 @@ struct lop_odb *lop_odb_get(const char *remote_name, struct strbuf *err)
     return cur;
 }
 
-int lop_odb_write_blob(struct lop_odb *entry, const struct object_id *oid,
-                       const void *data, size_t size, struct strbuf *err)
+static int lop_odb_prepare_source(struct lop_odb *entry, const struct object_id *oid,
+                                  struct odb_source **source, struct strbuf *err)
 {
-    struct object_id written;
-    struct odb_source *source;
-
-    if (!entry)
+    if (!entry) {
+        strbuf_addstr(err, "internal error: missing LOP entry");
         return -1;
+    }
 
     if (!entry->repo_ready) {
         if (lop_odb_prepare_repo(entry, err))
@@ -127,13 +127,32 @@ int lop_odb_write_blob(struct lop_odb *entry, const struct object_id *oid,
     }
 
     if (odb_has_object(entry->repo.objects, oid, 0))
-        return 0;
+        return 1;
 
-    source = entry->repo.objects->sources;
-    if (!source || !source->local) {
+    if (git_env_bool("GIT_TEST_LOP_FORCE_READONLY", 0)) {
         strbuf_addf(err, "lop remote '%s' does not have a writable object store", entry->name);
         return -1;
     }
+
+    *source = entry->repo.objects->sources;
+    if (!*source || !(*source)->local) {
+        strbuf_addf(err, "lop remote '%s' does not have a writable object store", entry->name);
+        return -1;
+    }
+
+    return 0;
+}
+
+int lop_odb_write_blob(struct lop_odb *entry, const struct object_id *oid,
+                       const void *data, size_t size, struct strbuf *err)
+{
+    struct object_id written;
+    struct odb_source *source = NULL;
+    int status;
+
+    status = lop_odb_prepare_source(entry, oid, &source, err);
+    if (status)
+        return status;
 
     if (write_object_file(source, data, size, OBJ_BLOB, &written, NULL, 0)) {
         strbuf_addf(err, "failed to write blob to '%s'", entry->name);
