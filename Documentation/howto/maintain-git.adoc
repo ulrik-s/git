@@ -593,3 +593,23 @@ to move the fix to apply to the other branch, perhaps like this:
       $ mf=refs/merge-fix
       $ git update-ref $mf/$the_other_branch $mf/ai/topic
       $ git update-ref -d $mf/ai/topic
+
+Coverage builds with Clang/LLVM
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Clang does not ship `libgcov`, so a straight `make coverage-compile`
+fails on macOS and other LLVM based environments when the linker
+cannot satisfy `-lgcov`.  The coverage targets now probe the compiler
+for an appropriate runtime and fall back to Clang's
+`libclang_rt.profile*.a` archives automatically.  To gather coverage
+data with the system toolchain on macOS, run:
+
+----
+$ make GCOV="llvm-cov gcov" coverage-compile
+$ (cd t && GIT_TEST_LOP_COVERAGE=1 GCOV="llvm-cov gcov" ./t5711-lop-offload.sh)
+$ make GCOV="llvm-cov gcov" coverage-report
+----
+
+If you use a non-standard toolchain layout you can still override the
+detected runtime explicitly by passing `COVERAGE_LIBS=/path/to/archive`
+on the command line.

@@ -3886,7 +3886,30 @@ coverage-clean: coverage-clean-results
 	$(RM) $(addsuffix *.gcno,$(object_dirs))
 
 COVERAGE_CFLAGS = $(CFLAGS) -O0 -ftest-coverage -fprofile-arcs
-COVERAGE_LDFLAGS = $(CFLAGS)  -O0 -lgcov
+
+# Detect a suitable coverage runtime library. GCC provides libgcov while
+# Clang ships platform-specific archives such as libclang_rt.profile_osx.a.
+coverage_libgcov               := $(shell $(CC) -print-file-name=libgcov.a 2>/dev/null)
+coverage_libclang_profile_osx  := $(shell $(CC) -print-file-name=libclang_rt.profile_osx.a 2>/dev/null)
+coverage_libclang_profile_x86  := $(shell $(CC) -print-file-name=libclang_rt.profile-x86_64.a 2>/dev/null)
+
+ifndef COVERAGE_LIBS
+ifeq ($(coverage_libgcov),libgcov.a)
+ifeq ($(coverage_libclang_profile_osx),libclang_rt.profile_osx.a)
+ifeq ($(coverage_libclang_profile_x86),libclang_rt.profile-x86_64.a)
+COVERAGE_LIBS :=
+else
+COVERAGE_LIBS := $(coverage_libclang_profile_x86)
+endif
+else
+COVERAGE_LIBS := $(coverage_libclang_profile_osx)
+endif
+else
+COVERAGE_LIBS := -lgcov
+endif
+endif
+
+COVERAGE_LDFLAGS = $(CFLAGS)  -O0 $(COVERAGE_LIBS)
 GCOVFLAGS = --preserve-paths --branch-probabilities --all-blocks
 
 coverage-compile:
