@@ -3953,8 +3953,9 @@ cover_db_html: cover_db
 	cover -report html -outputdir cover_db_html cover_db
 
 .PHONY: cover_db cover_db_html coverage-html
-coverage-html: coverage-report
+
 ifeq ($(COVERAGE_HTML),gcovr)
+coverage-html: coverage-report
 	@if ! command -v "$(GCOVR)" >/dev/null 2>&1; then \
 	echo >&2 "error: gcovr not found. Install gcovr (e.g. 'pip install gcovr' or 'brew install gcovr') or set GCOVR to its path."; \
 	exit 1; \
@@ -3962,6 +3963,7 @@ ifeq ($(COVERAGE_HTML),gcovr)
 	mkdir -p cover_db_html
 	$(GCOVR) $(GCOVRFLAGS) --output cover_db_html/index.html --root . .
 else
+coverage-html: coverage-report
 	$(MAKE) COVERAGE_HTML=gcov2perl cover_db_html
 endif
 
