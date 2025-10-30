@@ -614,12 +614,20 @@ If you use a non-standard toolchain layout you can still override the
 detected runtime explicitly by passing `COVERAGE_LIBS=/path/to/archive`
 on the command line.
 
-Generating the optional HTML summary depends on `gcov2perl`, which is
-distributed with the Perl `Devel::Cover` package.  Install it with your
-preferred tool (for example `brew install cpanminus && cpanm
-Devel::Cover` or `cpan Devel::Cover`), or tell the build system where
-to find the binary:
+Generating the optional HTML summary uses `gcov2perl` from the Perl
+`Devel::Cover` package by default.  Install it with your preferred tool
+(for example `brew install cpanminus && cpanm Devel::Cover` or `cpan
+Devel::Cover`), or tell the build system where to find the binary:
 
 ----
 $ make GCOV2PERL=/opt/homebrew/bin/gcov2perl cover_db_html
+----
+
+You can alternatively rely on `gcovr` when Perl is unavailable.  Set the
+HTML backend to `gcovr` (and override the binary path if needed) to
+render an HTML report in `cover_db_html/index.html` without the
+`gcov2perl` and `cover` tools:
+
+----
+$ make COVERAGE_HTML=gcovr GCOVR=/opt/homebrew/bin/gcovr coverage-html
 ----

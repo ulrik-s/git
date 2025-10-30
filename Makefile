@@ -664,6 +664,9 @@ MSGMERGE = msgmerge
 CURL_CONFIG = curl-config
 GCOV = gcov
 GCOV2PERL ?= gcov2perl
+GCOVR ?= gcovr
+GCOVRFLAGS ?= --html-details --print-summary
+COVERAGE_HTML ?= gcov2perl
 STRIP = strip
 SPATCH = spatch
 LD = ld
@@ -3948,6 +3951,19 @@ cover_db: coverage-report
 
 cover_db_html: cover_db
 	cover -report html -outputdir cover_db_html cover_db
+
+.PHONY: cover_db cover_db_html coverage-html
+coverage-html: coverage-report
+ifeq ($(COVERAGE_HTML),gcovr)
+	@if ! command -v "$(GCOVR)" >/dev/null 2>&1; then \
+	echo >&2 "error: gcovr not found. Install gcovr (e.g. 'pip install gcovr' or 'brew install gcovr') or set GCOVR to its path."; \
+	exit 1; \
+	fi
+	mkdir -p cover_db_html
+	$(GCOVR) $(GCOVRFLAGS) --output cover_db_html/index.html --root . .
+else
+	$(MAKE) COVERAGE_HTML=gcov2perl cover_db_html
+endif
 
 
 ### Fuzz testing
