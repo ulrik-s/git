@@ -663,6 +663,7 @@ MSGFMT = msgfmt
 MSGMERGE = msgmerge
 CURL_CONFIG = curl-config
 GCOV = gcov
+GCOV2PERL ?= gcov2perl
 STRIP = strip
 SPATCH = spatch
 LD = ld
@@ -3939,7 +3940,11 @@ coverage-untested-functions: coverage-report
 		> coverage-untested-functions
 
 cover_db: coverage-report
-	gcov2perl -db cover_db *.gcov
+	@if ! command -v "$(GCOV2PERL)" >/dev/null 2>&1; then \
+		echo >&2 "error: gcov2perl not found. Install Devel::Cover (e.g. 'cpan Devel::Cover' or 'brew install cpanminus && cpanm Devel::Cover') or set GCOV2PERL to its path."; \
+		exit 1; \
+	fi
+	$(GCOV2PERL) -db cover_db *.gcov
 
 cover_db_html: cover_db
 	cover -report html -outputdir cover_db_html cover_db
