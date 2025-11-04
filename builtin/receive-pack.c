@@ -34,7 +34,6 @@
 #include "object-file.h"
 #include "object-name.h"
 #include "odb.h"
-#include "lop-offload.h"
 #include "path.h"
 #include "protocol.h"
 #include "commit-reach.h"
@@ -152,9 +151,6 @@ static int receive_pack_config(const char *var, const char *value,
 
 	if (status)
 		return status;
-
-	if (!lop_receive_pack_config(var, value))
-		return 0;
 
 	if (strcmp(var, "receive.denydeletes") == 0) {
 		deny_deletes = git_config_bool(var, value);
@@ -2680,8 +2676,10 @@ int cmd_receive_pack(int argc,
 		use_keepalive = KEEPALIVE_ALWAYS;
 		execute_commands(commands, unpack_status, &si,
 				 &push_options);
-		if (!unpack_status)
-			lop_process_push(the_repository, commands);
+		if (!unpack_status) {
+			if (run_receive_hook(commands, "lop-offload", 0, &push_options))
+				unpack_status = "lop-offload hook failed";
+		}
 		delete_tempfile(&pack_lockfile);
 		sigchain_push(SIGPIPE, SIG_IGN);
 		if (report_status_v2)

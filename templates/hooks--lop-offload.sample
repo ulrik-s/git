@@ -1,0 +1,137 @@
+#!/bin/sh
+#
+# An example hook script to offload large blobs to promisor remotes.
+#
+# This hook is invoked by 'git-receive-pack' after objects have been
+# unpacked and refs updated, but before the pack is finalized. It receives
+# the list of ref updates on standard input in the form:
+#
+#   <old-oid> <new-oid> <ref-name>
+#
+# The hook can offload large blobs to promisor remotes and remove them
+# from the local repository, avoiding the need to store large files
+# on the main Git server.
+#
+# To enable this hook, rename this file to "lop-offload" and configure
+# promisor remotes with partialclonefilter settings.
+
+# Exit early if LOP is not enabled
+LOP_ENABLE=$(git config --bool receive.lop.enable 2>/dev/null)
+[ "$LOP_ENABLE" = "true" ] || exit 0
+
+# Get repository path
+GIT_DIR=$(git rev-parse --git-dir) || exit 1
+
+# Discover promisor remotes with their filters
+discover_promisors() {
+    git remote | while read -r remote; do
+        # Check if promisor is enabled
+        enabled=$(git config --bool "remote.$remote.promisor" 2>/dev/null)
+        [ "$enabled" = "true" ] || continue
+        
+        # Get the partial clone filter
+        filter=$(git config "remote.$remote.partialclonefilter" 2>/dev/null)
+        [ -n "$filter" ] || continue
+        
+        printf "%s\t%s\n" "$remote" "$filter"
+    done
+}
+
+# Parse blob filter to determine size threshold
+parse_blob_filter() {
+    local filter=$1
+    case "$filter" in
+        "blob:none")
+            echo "0"  # Match all blobs
+            ;;
+        blob:limit=*)
+            echo "${filter#blob:limit=}"
+            ;;
+        combine:blob:none*)
+            echo "0"  # Match all blobs in combine filter
+            ;;
+        combine:*blob:limit=*)
+            # Extract limit from combine filter
+            echo "$filter" | sed -n 's/.*blob:limit=\([0-9]*\).*/\1/p'
+            ;;
+        *)
+            echo ""  # Unsupported filter
+            ;;
+    esac
+}
+
+# Match blob size to appropriate promisor remote (first match wins)
+match_blob_to_promisor() {
+    local size=$1
+    
+    while IFS=$'\t' read -r remote filter; do
+        limit=$(parse_blob_filter "$filter")
+        [ -n "$limit" ] || continue
+        
+        # If blob size exceeds the limit, return this remote (first match wins)
+        if [ "$size" -gt "$limit" ]; then
+            echo "$remote"
+            return 0
+        fi
+    done
+    
+    echo ""
+}
+
+# Remove loose object from local repository
+remove_loose_object() {
+    local oid=$1
+    local obj_path="$GIT_DIR/objects/${oid:0:2}/${oid:2}"
+    
+    if [ -f "$obj_path" ]; then
+        rm -f "$obj_path" 2>/dev/null || {
+            echo >&2 "Warning: Failed to remove $obj_path"
+            return 1
+        }
+        # Try to remove directory if empty
+        rmdir "$GIT_DIR/objects/${oid:0:2}" 2>/dev/null || true
+        return 0
+    fi
+    return 0
+}
+
+# Main processing
+PROMISORS=$(discover_promisors)
+[ -n "$PROMISORS" ] || exit 0
+
+# Read ref updates from stdin
+STATUS=0
+tmpfile=$(mktemp)
+trap "rm -f $tmpfile" EXIT
+
+while read old_oid new_oid ref_name; do
+    [ "$new_oid" = "0000000000000000000000000000000000000000" ] && continue
+    
+    if [ "$old_oid" = "0000000000000000000000000000000000000000" ]; then
+        range="$new_oid"
+    else
+        range="$old_oid..$new_oid"
+    fi
+    
+    # Collect blobs per remote
+    git rev-list --objects "$range" 2>/dev/null > "$tmpfile"
+    while read oid path; do
+        [ -n "$oid" ] || continue
+        type=$(git cat-file -t "$oid" 2>/dev/null) || continue
+        [ "$type" = "blob" ] || continue
+        
+        size=$(git cat-file -s "$oid" 2>/dev/null) || continue
+        remote=$(echo "$PROMISORS" | match_blob_to_promisor "$size")
+        [ -n "$remote" ] || continue
+        
+        # Push blob to remote using temporary ref (cleaned up by post-receive hook)
+        if git push "$remote" "$oid:refs/lop/blobs/$oid" >/dev/null 2>&1; then
+            remove_loose_object "$oid"
+        else
+            echo "error: failed to push blob $oid to promisor remote $remote" >&2
+            STATUS=1
+        fi
+    done < "$tmpfile"
+done
+
+exit $STATUS

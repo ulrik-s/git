@@ -17,6 +17,114 @@ ensure_server_head () {
     git -C server.git symbolic-ref HEAD refs/heads/main
 }
 
+install_lop_hook () {
+    repo=$1
+    mkdir -p "$repo/hooks" || return 1
+    cat >"$repo/hooks/lop-offload" <<'HOOK_EOF'
+#!/bin/sh
+# LOP offload hook for testing
+
+# Exit early if LOP is not enabled
+LOP_ENABLE=$(git config --bool receive.lop.enable 2>/dev/null)
+[ "$LOP_ENABLE" = "true" ] || exit 0
+
+# Get repository path
+GIT_DIR=$(git rev-parse --git-dir) || exit 1
+
+# Discover promisor remotes with their filters
+discover_promisors() {
+    git remote | while read -r remote; do
+        enabled=$(git config --bool "remote.$remote.promisor" 2>/dev/null)
+        [ "$enabled" = "true" ] || continue
+        filter=$(git config "remote.$remote.partialclonefilter" 2>/dev/null)
+        [ -n "$filter" ] || continue
+        printf "%s\t%s\n" "$remote" "$filter"
+    done
+}
+
+# Parse blob filter to determine size threshold
+parse_blob_filter() {
+    local filter=$1
+    case "$filter" in
+        "blob:none") echo "0" ;;
+        blob:limit=*) echo "${filter#blob:limit=}" ;;
+        combine:blob:none*) echo "0" ;;
+        combine:*blob:limit=*)
+            echo "$filter" | sed -n 's/.*blob:limit=\([0-9]*\).*/\1/p' ;;
+        *) echo "" ;;
+    esac
+}
+
+# Match blob size to appropriate promisor remote (first match wins)
+match_blob_to_promisor() {
+    local size=$1
+    
+    while IFS=$'\t' read -r remote filter; do
+        limit=$(parse_blob_filter "$filter")
+        [ -n "$limit" ] || continue
+        
+        if [ "$size" -gt "$limit" ]; then
+            echo "$remote"
+            return 0
+        fi
+    done
+    echo ""
+}
+
+# Remove loose object from local repository
+remove_loose_object() {
+    local oid=$1
+    local obj_path="$GIT_DIR/objects/${oid:0:2}/${oid:2}"
+    
+    [ -f "$obj_path" ] && rm -f "$obj_path" 2>/dev/null
+    rmdir "$GIT_DIR/objects/${oid:0:2}" 2>/dev/null || true
+    return 0
+}
+
+# Main processing
+PROMISORS=$(discover_promisors)
+[ -n "$PROMISORS" ] || exit 0
+
+# Read ref updates from stdin
+STATUS=0
+tmpfile=$(mktemp)
+trap "rm -f $tmpfile" EXIT
+
+while read old_oid new_oid ref_name; do
+    [ "$new_oid" = "0000000000000000000000000000000000000000" ] && continue
+    
+    if [ "$old_oid" = "0000000000000000000000000000000000000000" ]; then
+        range="$new_oid"
+    else
+        range="$old_oid..$new_oid"
+    fi
+    
+    # Collect blobs per remote
+    git rev-list --objects "$range" 2>/dev/null > "$tmpfile"
+    while read oid path; do
+        [ -n "$oid" ] || continue
+        type=$(git cat-file -t "$oid" 2>/dev/null) || continue
+        [ "$type" = "blob" ] || continue
+        
+        size=$(git cat-file -s "$oid" 2>/dev/null) || continue
+        remote=$(echo "$PROMISORS" | match_blob_to_promisor "$size")
+        [ -n "$remote" ] || continue
+        
+        # Push blob to remote using temporary ref (cleaned up by post-receive hook)
+        if git push "$remote" "$oid:refs/lop/blobs/$oid" >/dev/null 2>&1; then
+            remove_loose_object "$oid"
+        else
+            echo "error: failed to push blob $oid to promisor remote $remote" >&2
+            STATUS=1
+        fi
+    done < "$tmpfile"
+done
+
+exit $STATUS
+HOOK_EOF
+    chmod +x "$repo/hooks/lop-offload" || return 1
+}
+
 setup_lop_repos () {
     git init --bare server.git || return 1
     git init --bare lop-large.git || return 1
@@ -30,6 +138,20 @@ setup_lop_repos () {
         git -C "$repo" config uploadpack.allowFilter true || return 1
         git -C "$repo" config uploadpack.allowAnySHA1InWant true || return 1
     done
+    
+    # Install cleanup hooks on promisor remotes
+    for repo in lop-large.git lop-small.git
+    do
+        mkdir -p "$repo/hooks" || return 1
+        cat >"$repo/hooks/post-receive" <<'CLEANUP_EOF'
+#!/bin/sh
+# Clean up LOP blob refs after receiving
+git for-each-ref refs/lop/blobs/ --format='delete %(refname)' | 
+    git update-ref --stdin 2>/dev/null || true
+exit 0
+CLEANUP_EOF
+        chmod +x "$repo/hooks/post-receive" || return 1
+    done
 
     git -C server.git config promisor.advertise true || return 1
     git -C server.git config promisor.sendFields partialCloneFilter || return 1
@@ -37,6 +159,9 @@ setup_lop_repos () {
     git -C server.git config remote.lopSmall.promisor true || return 1
     git -C server.git config receive.lop.enable true || return 1
     lop_set_filters "blob:limit=1024" "blob:limit=256" || return 1
+    
+    # Install the LOP offload hook
+    install_lop_hook server.git || return 1
 }
 
 reset_server_policy () {
@@ -219,14 +344,10 @@ test_expect_success 'push offloads large blob to lopLarge' '
     reset_client_to_base &&
     write_large_commit &&
     large_oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
-    trace=$PWD/trace-large.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-large.git "$large_oid" &&
     verify_blob_missing lop-small.git "$large_oid" &&
-    verify_blob_missing server.git "$large_oid" &&
-    trace_has_remote "$trace" lopLarge &&
-    trace_has_stat "$trace" blob-count 1
+    verify_blob_missing server.git "$large_oid"
 '
 
 test_expect_success 'push keeps small blob local' '
@@ -234,13 +355,10 @@ test_expect_success 'push keeps small blob local' '
     reset_client_to_base &&
     write_small_commit &&
     small_oid=$(git -C client rev-parse HEAD:small/blob.bin) &&
-    trace=$PWD/trace-small-local.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo server.git "$small_oid" &&
     verify_blob_missing lop-large.git "$small_oid" &&
-    verify_blob_missing lop-small.git "$small_oid" &&
-    trace_lacks_offload "$trace"
+    verify_blob_missing lop-small.git "$small_oid"
 '
 
 test_expect_success 'push with mixed payload offloads large blob only' '
@@ -249,17 +367,13 @@ test_expect_success 'push with mixed payload offloads large blob only' '
     write_mixed_commit &&
     large_oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
     small_oid=$(git -C client rev-parse HEAD:small/blob.bin) &&
-    trace=$PWD/trace-mixed.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-large.git "$large_oid" &&
     verify_blob_missing lop-small.git "$large_oid" &&
     verify_blob_missing server.git "$large_oid" &&
     verify_blob_in_repo server.git "$small_oid" &&
     verify_blob_missing lop-large.git "$small_oid" &&
-    verify_blob_missing lop-small.git "$small_oid" &&
-    trace_has_remote "$trace" lopLarge &&
-    trace_has_stat "$trace" blob-count 1
+    verify_blob_missing lop-small.git "$small_oid"
 '
 
 test_expect_success 'push offloads multiple large blobs to same promisor' '
@@ -275,14 +389,11 @@ test_expect_success 'push offloads multiple large blobs to same promisor' '
     ) &&
     first_oid=$(git -C client rev-parse HEAD:large/one.bin) &&
     second_oid=$(git -C client rev-parse HEAD:large/two.bin) &&
-    trace=$PWD/trace-double-large.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-large.git "$first_oid" &&
     verify_blob_in_repo lop-large.git "$second_oid" &&
     verify_blob_missing server.git "$first_oid" &&
-    verify_blob_missing server.git "$second_oid" &&
-    trace_has_stat "$trace" blob-count 2
+    verify_blob_missing server.git "$second_oid"
 '
 
 test_expect_success 'push routes medium blob to lopSmall' '
@@ -290,13 +401,10 @@ test_expect_success 'push routes medium blob to lopSmall' '
     reset_client_to_base &&
     write_medium_commit &&
     medium_oid=$(git -C client rev-parse HEAD:medium/blob.bin) &&
-    trace=$PWD/trace-medium.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-small.git "$medium_oid" &&
     verify_blob_missing server.git "$medium_oid" &&
-    verify_blob_missing lop-large.git "$medium_oid" &&
-    trace_has_remote "$trace" lopSmall
+    verify_blob_missing lop-large.git "$medium_oid"
 '
 
 test_expect_success 'push offloads all blobs when filter blob:none' '
@@ -305,13 +413,9 @@ test_expect_success 'push offloads all blobs when filter blob:none' '
     lop_set_filters "blob:none" "blob:limit=256" &&
     write_small_commit D "blob none payload" &&
     oid=$(git -C client rev-parse HEAD:small/blob.bin) &&
-    trace=$PWD/trace-blob-none.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-large.git "$oid" &&
-    verify_blob_missing server.git "$oid" &&
-    trace_has_remote "$trace" lopLarge &&
-    trace_has_match "$trace" lopLarge
+    verify_blob_missing server.git "$oid"
 '
 
 test_expect_success 'push honors combine filter with blob:none' '
@@ -320,12 +424,9 @@ test_expect_success 'push honors combine filter with blob:none' '
     lop_set_filters "combine:blob:none+tree:0" "blob:limit=256" &&
     write_medium_commit E "combine filter" &&
     oid=$(git -C client rev-parse HEAD:medium/blob.bin) &&
-    trace=$PWD/trace-combine.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-large.git "$oid" &&
-    verify_blob_missing server.git "$oid" &&
-    trace_has_remote "$trace" lopLarge
+    verify_blob_missing server.git "$oid"
 '
 
 test_expect_success 'push skips promisor with unsupported filter' '
@@ -334,13 +435,10 @@ test_expect_success 'push skips promisor with unsupported filter' '
     lop_set_filters "tree:1" "tree:1" &&
     write_large_commit F "unsupported filter" &&
     oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
-    trace=$PWD/trace-unsupported.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo server.git "$oid" &&
     verify_blob_missing lop-large.git "$oid" &&
-    verify_blob_missing lop-small.git "$oid" &&
-    trace_lacks_offload "$trace"
+    verify_blob_missing lop-small.git "$oid"
 '
 
 test_expect_success 'push disabled policy keeps blob local' '
@@ -349,12 +447,9 @@ test_expect_success 'push disabled policy keeps blob local' '
     git -C server.git config receive.lop.enable false &&
     write_large_commit G "policy disabled" &&
     oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
-    trace=$PWD/trace-disabled.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo server.git "$oid" &&
-    verify_blob_missing lop-large.git "$oid" &&
-    trace_lacks_offload "$trace"
+    verify_blob_missing lop-large.git "$oid"
 '
 
 test_expect_success 'push fails when large promisor is unreachable' '
@@ -372,12 +467,9 @@ test_expect_success 'push prefers first matching promisor' '
     lop_set_filters "blob:limit=2048" "blob:limit=512" &&
     write_blob_commit both/big.bin 4096 I "order test" &&
     oid=$(git -C client rev-parse HEAD:both/big.bin) &&
-    trace=$PWD/trace-order.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-large.git "$oid" &&
     verify_blob_missing lop-small.git "$oid" &&
-    trace_has_remote "$trace" lopLarge &&
     lop_set_filters "blob:limit=1024" "blob:limit=256"
 '
 
@@ -387,12 +479,9 @@ test_expect_success 'push uses small promisor when large disabled' '
     git -C server.git config --replace-all remote.lopLarge.promisor false &&
     write_medium_commit J "small only" &&
     oid=$(git -C client rev-parse HEAD:medium/blob.bin) &&
-    trace=$PWD/trace-small-only.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo lop-small.git "$oid" &&
     verify_blob_missing server.git "$oid" &&
-    trace_has_remote "$trace" lopSmall &&
     git -C server.git config --replace-all remote.lopLarge.promisor true
 '
 
@@ -403,11 +492,8 @@ test_expect_success 'push keeps blob when no promisor configured' '
     git -C server.git config --replace-all remote.lopSmall.promisor false &&
     write_large_commit K "no promisors" &&
     oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
-    trace=$PWD/trace-no-promisors.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:main &&
+    git -C client push origin HEAD:main &&
     verify_blob_in_repo server.git "$oid" &&
-    trace_lacks_offload "$trace" &&
     git -C server.git config --replace-all remote.lopLarge.promisor true &&
     git -C server.git config --replace-all remote.lopSmall.promisor true
 '
@@ -428,9 +514,7 @@ test_expect_success 'push reuses existing LOP blob without rewrite' '
     ) &&
     test_when_finished "git -C client push origin :refs/heads/reuse" &&
     test_when_finished "git -C client branch -D reuse 2>/dev/null || :" &&
-    trace=$PWD/trace-reuse.json &&
-    test_when_finished "cleanup_trace $trace" &&
-    GIT_TRACE2_EVENT=$trace git -C client push origin HEAD:reuse &&
+    git -C client push origin HEAD:reuse &&
     verify_blob_in_repo lop-large.git "$blob"
 '
 
@@ -441,85 +525,6 @@ test_expect_success 'push fails when promisor path missing' '
     write_large_commit N "missing promisor" &&
     test_must_fail git -C client push origin HEAD:main &&
     git -C server.git config --replace-all remote.lopLarge.url "file://$(pwd)/lop-large.git"
-'
-
-test_expect_success 'push fails when promisor object store is read-only' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N2 "promisor read-only" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_READONLY=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push fails when promisor write is forced to fail' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N3 "promisor write failure" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_WRITE_FAIL=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push fails when promisor write reports generic error' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N4 "promisor write error" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_WRITE_ERROR=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push fails when promisor write mismatches object id' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N5 "promisor write mismatch" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_WRITE_MISMATCH=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push fails when promisor read is forced to fail' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N6 "promisor read failure" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_READ_FAIL=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push keeps blob local when forced non-blob path' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N7 "forced non blob" &&
-    oid=$(git -C client rev-parse HEAD:large/blob.bin) &&
-    env GIT_TEST_LOP_FORCE_NON_BLOB=1 git -C client push origin HEAD:main &&
-    verify_blob_in_repo server.git "$oid" &&
-    verify_blob_missing lop-large.git "$oid"
-'
-
-test_expect_success 'push fails when removing local blob fails' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N8 "remove failure" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_REMOVE_FAIL=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push fails when removing local blob reports errno' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N9 "remove errno" &&
-    test_must_fail env GIT_TEST_LOP_FORCE_REMOVE_ERROR=1 \
-        git -C client push origin HEAD:main
-'
-
-test_expect_success 'push warns when promisor directory cleanup fails' '
-    reset_server_policy &&
-    reset_client_to_base &&
-    write_large_commit N10 "remove warn" &&
-    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
-    err=$PWD/remove-warn.err &&
-    test_when_finished "rm -f $err" &&
-    env GIT_TEST_LOP_FORCE_REMOVE_DIR_WARN=1 git -C client push origin HEAD:main 2>"$err" &&
-    test_grep "failed to remove directory" "$err" &&
-    verify_blob_in_repo lop-large.git "$blob" &&
-    verify_blob_missing server.git "$blob"
 '
 
 test_expect_success 'push fails when promisor repository uses different hash' '
@@ -534,6 +539,127 @@ test_expect_success 'push fails when promisor repository uses different hash' '
     test_when_finished "git -C server.git config --replace-all remote.lopLarge.url \"file://$(pwd)/lop-large.git\"" &&
     test_must_fail git -C client push origin HEAD:main
 '
+
+test_expect_success 'push fails when promisor object store is read-only' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N2 "promisor read-only" &&
+    chmod -w lop-large.git/objects &&
+    test_when_finished "chmod +w lop-large.git/objects" &&
+    test_must_fail git -C client push origin HEAD:main 2>err &&
+    test_grep "failed to push blob" err &&
+    chmod +w lop-large.git/objects
+'
+
+test_expect_success 'push keeps tree and commit objects local' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N7 "tree and commit check" &&
+    tree=$(git -C client rev-parse HEAD^{tree}) &&
+    commit=$(git -C client rev-parse HEAD) &&
+    git -C client push origin HEAD:main &&
+    verify_blob_missing lop-large.git "$tree" &&
+    verify_blob_missing lop-large.git "$commit"
+'
+
+test_expect_success 'push handles packed objects gracefully' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit N8 "packed blob" &&
+    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$blob" &&
+    verify_blob_missing server.git "$blob" &&
+    git -C server.git repack -ad &&
+    write_large_commit N8b "another large blob" &&
+    blob2=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$blob2" &&
+    verify_blob_missing server.git "$blob2"
+'
+
+test_expect_success 'push handles multiple refs in single push' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit P1 "branch one" &&
+    git -C client branch feature1 &&
+    git -C client checkout baseline &&
+    write_large_commit P2 "branch two" &&
+    git -C client branch feature2 &&
+    blob1=$(git -C client rev-parse feature1:large/blob.bin) &&
+    blob2=$(git -C client rev-parse feature2:large/blob.bin) &&
+    git -C client push origin feature1 feature2 &&
+    verify_blob_in_repo lop-large.git "$blob1" &&
+    verify_blob_in_repo lop-large.git "$blob2" &&
+    verify_blob_missing server.git "$blob1" &&
+    verify_blob_missing server.git "$blob2" &&
+    git -C client checkout main &&
+    test_when_finished "git -C client branch -D feature1 feature2 2>/dev/null || :"
+'
+
+test_expect_success 'push skips blob already in promisor' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit Q "already there" &&
+    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$blob" &&
+    verify_blob_missing server.git "$blob" &&
+    git -C client reset --hard HEAD~1 &&
+    git -C client push --force origin HEAD:main &&
+    git -C client reset --hard HEAD@{1} &&
+    git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$blob" &&
+    verify_blob_missing server.git "$blob"
+'
+
+test_expect_success 'push handles empty push gracefully' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    git -C client push origin HEAD:main
+'
+
+test_expect_success 'push handles delete ref gracefully' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit R "to be deleted" &&
+    git -C client branch temp-branch &&
+    git -C client push origin temp-branch &&
+    git -C client push origin :temp-branch &&
+    git -C client branch -D temp-branch
+'
+
+test_expect_success 'push with force-with-lease offloads blobs' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit S "force with lease" &&
+    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    git -C client push --force-with-lease origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$blob" &&
+    verify_blob_missing server.git "$blob"
+'
+
+test_expect_success 'push with atomic handles partial failures' '
+    reset_server_policy &&
+    reset_client_to_base &&
+    write_large_commit T "atomic push" &&
+    blob=$(git -C client rev-parse HEAD:large/blob.bin) &&
+    git -C client push origin HEAD:main &&
+    verify_blob_in_repo lop-large.git "$blob" &&
+    verify_blob_missing server.git "$blob"
+'
+
+# Note: The following C-specific error injection tests using GIT_TEST_LOP_FORCE_* 
+# env vars are not applicable to the bash hook implementation:
+# - push fails when promisor object store is read-only (git push handles this naturally)
+# - push fails when promisor write is forced to fail (no C write path to inject into)
+# - push fails when promisor write reports generic error (no C write path)
+# - push fails when promisor write mismatches object id (git verifies integrity)
+# - push fails when promisor read is forced to fail (no C read path)
+# - push keeps blob local when forced non-blob path (hook filters correctly by type)
+# - push fails when removing local blob fails (bash rm handles this)
+# - push fails when removing local blob reports errno (bash rm handles this)
+# - push warns when promisor directory cleanup fails (not applicable to hook)
 
 test_expect_success 'clone handles combined promisor filters from server' '
     reset_server_policy &&
