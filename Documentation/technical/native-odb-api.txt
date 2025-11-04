@@ -1,0 +1,54 @@
+Native ODB API overview
+=========================
+
+Git's native object database (ODB) exposes `struct object_database` and
+`struct odb_source` as the central data structures for working with local
+and alternate object stores.【F:odb.h†L102-L160】
+The API provides helpers to create a database (`odb_new()`), attach paths as
+object sources, and read or write objects through functions such as
+`odb_write_object_ext()` that operate on the local repository's primary
+object directory.【F:odb.h†L169-L477】
+
+A consumer that wants to experiment with custom storage can allocate its own
+ODB using `odb_new()`, populate `struct odb_source` entries, and reuse Git's
+object hashing helpers (for example `hash_object_file()`) to stay compatible
+with Git's loose-object format.【F:object-file.h†L1-L126】【F:odb.c†L983-L1007】
+
+Simple ODB example helper
+-------------------------
+
+The `test-tool simple-odb` helper demonstrates a minimal object database that
+stores entries in a single text file. It hashes payloads using
+`hash_object_file()`, encodes the data as hexadecimal, and records the type,
+size, and object ID for later retrieval.【F:t/helper/test-simple-odb.c†L1-L213】
+The helper exposes commands to initialize the store, append blobs, list the
+stored object IDs, and read an object's payload back onto disk while reporting
+its type.【F:t/helper/test-simple-odb.c†L145-L212】
+
+The accompanying regression test (`t/t0039-simple-odb.sh`) uses the helper to
+write and read blobs, verifying both the listing order and payload
+round-tripping to illustrate how an alternative backing store can interoperate
+with Git's hashing rules.【F:t/t0039-simple-odb.sh†L1-L46】
+
+Comparison with other ODB APIs
+------------------------------
+
+* **libgit2** exposes an `git_odb` type with pluggable backends and callbacks
+  that are registered globally. Implementers provide `read`, `write`, and
+  iteration function pointers, but the integration is centered around a single
+  multi-backend registry instead of Git's notion of one primary source plus a
+  linked list of alternates.
+* **gitoxide** (gix) models its ODB as a layered `gix_odb::Store`, combining
+  a cache and multiple stores selected via configuration. Custom stores
+  implement the `Store` trait and are typically used by wiring them into a
+  `Repository` configuration object.
+
+Key compatibility considerations
+--------------------------------
+
+Git's native API must preserve backwards compatibility with repositories that
+may be accessed by older clients, so helpers should reuse Git's hashing
+functions and object formats rather than inventing new on-disk layouts. This is
+why the example focuses on hashing payloads with `hash_object_file()` and
+expressing data in a reversible textual format, mirroring how loose objects are
+validated today.【F:t/helper/test-simple-odb.c†L61-L100】
