@@ -927,10 +927,17 @@ export PYTHON_PATH
 TEST_SHELL_PATH = $(SHELL_PATH)
 
 LIB_FILE = libgit.a
+
 ifdef DEBUG
-RUST_LIB = target/debug/libgitcore.a
+RUST_TARGET_DIR = target/debug
 else
-RUST_LIB = target/release/libgitcore.a
+RUST_TARGET_DIR = target/release
+endif
+
+ifeq ($(uname_S),Windows)
+RUST_LIB = $(RUST_TARGET_DIR)/gitcore.lib
+else
+RUST_LIB = $(RUST_TARGET_DIR)/libgitcore.a
 endif
 
 GITLIBS = common-main.o $(LIB_FILE)
@@ -1262,6 +1269,12 @@ LIB_OBJS += reftable/table.o
 LIB_OBJS += reftable/tree.o
 LIB_OBJS += reftable/writer.o
 LIB_OBJS += remote.o
+LIB_OBJS += repack.o
+LIB_OBJS += repack-cruft.o
+LIB_OBJS += repack-filtered.o
+LIB_OBJS += repack-geometry.o
+LIB_OBJS += repack-midx.o
+LIB_OBJS += repack-promisor.o
 LIB_OBJS += replace-object.o
 LIB_OBJS += repo-settings.o
 LIB_OBJS += repository.o
@@ -1558,6 +1571,9 @@ ALL_LDFLAGS = $(LDFLAGS) $(LDFLAGS_APPEND)
 ifdef WITH_RUST
 BASIC_CFLAGS += -DWITH_RUST
 GITLIBS += $(RUST_LIB)
+ifeq ($(uname_S),Windows)
+EXTLIBS += -luserenv
+endif
 endif
 
 ifdef SANITIZE
