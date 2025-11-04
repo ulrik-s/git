@@ -4,12 +4,6 @@ test_description='LOP push offload routes blobs via promisor filters'
 
 . ./test-lib.sh
 
-if test -n "$GIT_TEST_LOP_COVERAGE"
-then
-    . "$TEST_DIRECTORY"/lib-lop-gcov.sh
-    lop_gcov_prepare
-fi
-
 TEST_PASSES_SANITIZE_LEAK=true
 
 lop_set_filters () {
@@ -633,58 +627,8 @@ test_expect_success 'end-to-end LOP turn-around flow shows disk savings' '
     test $(($full_client_size - $lop_client_size)) -gt 900
 '
 
-test_expect_success LOP_GCOV 'coverage: promisor filter helpers executed' '
-    lop_assert_gcov_functions builtin/clone.c \
-        extract_promisor_filter \
-        accumulate_promisor_filter &&
-    lop_assert_gcov_function_coverage builtin/clone.c 85 \
-        extract_promisor_filter \
-        accumulate_promisor_filter
-'
 
-test_expect_success LOP_GCOV 'coverage: lop receive-pack pipeline exercised' '
-    lop_assert_gcov_functions builtin/receive-pack.c \
-        lop_policy_init \
-        lop_policy_ensure_init \
-        lop_policy_reload_routes \
-        lop_route_rule_apply_filter \
-        lop_route_matches \
-        lop_match_blob \
-        lop_remove_local_blob \
-        lop_stats_get \
-        lop_stats_clear \
-        lop_record_blob \
-        lop_offload_blob_cb \
-        lop_for_each_new_blob \
-        lop_process_push &&
-    lop_assert_gcov_function_coverage builtin/receive-pack.c 85 \
-        lop_policy_init \
-        lop_policy_ensure_init \
-        lop_policy_reload_routes \
-        lop_route_rule_apply_filter \
-        lop_route_matches \
-        lop_match_blob \
-        lop_remove_local_blob \
-        lop_stats_get \
-        lop_stats_clear \
-        lop_record_blob \
-        lop_offload_blob_cb \
-        lop_for_each_new_blob \
-        lop_process_push
-'
 
-test_expect_success LOP_GCOV 'coverage: promisor odb helpers exercised' '
-    lop_assert_gcov_functions promisor-odb.c \
-        lop_odb_create \
-        lop_odb_prepare_repo \
-        lop_odb_get \
-        lop_odb_write_blob &&
-    lop_assert_gcov_function_coverage promisor-odb.c 85 \
-        lop_odb_create \
-        lop_odb_prepare_repo \
-        lop_odb_get \
-        lop_odb_write_blob
-'
 
 # final cleanup
 

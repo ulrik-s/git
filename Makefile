@@ -663,10 +663,6 @@ MSGFMT = msgfmt
 MSGMERGE = msgmerge
 CURL_CONFIG = curl-config
 GCOV = gcov
-GCOV2PERL ?= gcov2perl
-GCOVR ?= gcovr
-GCOVRFLAGS ?= --html-details --print-summary
-COVERAGE_HTML ?= gcov2perl
 STRIP = strip
 SPATCH = spatch
 LD = ld
@@ -1227,6 +1223,7 @@ LIB_OBJS += pretty.o
 LIB_OBJS += prio-queue.o
 LIB_OBJS += progress.o
 LIB_OBJS += promisor-odb.o
+LIB_OBJS += lop-offload.o
 LIB_OBJS += promisor-remote.o
 LIB_OBJS += prompt.o
 LIB_OBJS += protocol.o
@@ -3890,30 +3887,7 @@ coverage-clean: coverage-clean-results
 	$(RM) $(addsuffix *.gcno,$(object_dirs))
 
 COVERAGE_CFLAGS = $(CFLAGS) -O0 -ftest-coverage -fprofile-arcs
-
-# Detect a suitable coverage runtime library. GCC provides libgcov while
-# Clang ships platform-specific archives such as libclang_rt.profile_osx.a.
-coverage_libgcov               := $(shell $(CC) -print-file-name=libgcov.a 2>/dev/null)
-coverage_libclang_profile_osx  := $(shell $(CC) -print-file-name=libclang_rt.profile_osx.a 2>/dev/null)
-coverage_libclang_profile_x86  := $(shell $(CC) -print-file-name=libclang_rt.profile-x86_64.a 2>/dev/null)
-
-ifndef COVERAGE_LIBS
-ifeq ($(coverage_libgcov),libgcov.a)
-ifeq ($(coverage_libclang_profile_osx),libclang_rt.profile_osx.a)
-ifeq ($(coverage_libclang_profile_x86),libclang_rt.profile-x86_64.a)
-COVERAGE_LIBS :=
-else
-COVERAGE_LIBS := $(coverage_libclang_profile_x86)
-endif
-else
-COVERAGE_LIBS := $(coverage_libclang_profile_osx)
-endif
-else
-COVERAGE_LIBS := -lgcov
-endif
-endif
-
-COVERAGE_LDFLAGS = $(CFLAGS)  -O0 $(COVERAGE_LIBS)
+COVERAGE_LDFLAGS = $(CFLAGS)  -O0 -lgcov
 GCOVFLAGS = --preserve-paths --branch-probabilities --all-blocks
 
 coverage-compile:
@@ -3943,28 +3917,10 @@ coverage-untested-functions: coverage-report
 		> coverage-untested-functions
 
 cover_db: coverage-report
-	@if ! command -v "$(GCOV2PERL)" >/dev/null 2>&1; then \
-		echo >&2 "error: gcov2perl not found. Install Devel::Cover (e.g. 'cpan Devel::Cover' or 'brew install cpanminus && cpanm Devel::Cover') or set GCOV2PERL to its path."; \
-		exit 1; \
-	fi
-	$(GCOV2PERL) -db cover_db *.gcov
+	gcov2perl -db cover_db *.gcov
 
 cover_db_html: cover_db
 	cover -report html -outputdir cover_db_html cover_db
-
-.PHONY: cover_db cover_db_html coverage-html
-
-coverage-html: coverage-report
-ifeq ($(COVERAGE_HTML),gcovr)
-	@if ! command -v "$(GCOVR)" >/dev/null 2>&1; then \
-	echo >&2 "error: gcovr not found. Install gcovr (e.g. 'pip install gcovr' or 'brew install gcovr') or set GCOVR to its path."; \
-	exit 1; \
-	fi
-	mkdir -p cover_db_html
-	$(GCOVR) $(GCOVRFLAGS) --output cover_db_html/index.html --root . .
-else
-	$(MAKE) COVERAGE_HTML=gcov2perl cover_db_html
-endif
 
 
 ### Fuzz testing

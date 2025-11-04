@@ -59,8 +59,8 @@ receive.keepAlive::
         to 0 to disable keepalives entirely.
 
 receive.lop.enable::
-        Enable server-side offloading of blobs to Large-Object Promisor
-        (LOP) repositories. When set to true, `receive-pack` examines the
+       Enable server-side offloading of blobs to Large-Object Promisor
+       (LOP) repositories. When set to true, `receive-pack` examines the
         promisor remotes configured in the repository (for example via
         `remote.<name>.promisor = true`) and uses their
         `remote.<name>.partialCloneFilter` values to determine which
