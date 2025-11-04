@@ -21,7 +21,6 @@
 #include "remote.h"
 #include "connect.h"
 #include "string-list.h"
-#include "strbuf.h"
 #include "oid-array.h"
 #include "connected.h"
 #include "strvec.h"
@@ -36,7 +35,6 @@
 #include "object-name.h"
 #include "odb.h"
 #include "lop-offload.h"
-#include "parse.h"
 #include "path.h"
 #include "protocol.h"
 #include "commit-reach.h"
@@ -46,7 +44,6 @@
 #include "worktree.h"
 #include "shallow.h"
 #include "parse-options.h"
-#include "list-objects-filter-options.h"
 
 static const char * const receive_pack_usage[] = {
 	N_("git receive-pack <git-dir>"),
@@ -99,6 +96,7 @@ static struct signature_check sigcheck;
 static const char *push_cert_nonce;
 static char *cert_nonce_seed;
 static struct strvec hidden_refs = STRVEC_INIT;
+
 static const char *NONCE_UNSOLICITED = "UNSOLICITED";
 static const char *NONCE_BAD = "BAD";
 static const char *NONCE_MISSING = "MISSING";
@@ -147,21 +145,21 @@ static enum deny_action parse_deny_action(const char *var, const char *value)
 }
 
 static int receive_pack_config(const char *var, const char *value,
-                               const struct config_context *ctx, void *cb)
+			       const struct config_context *ctx, void *cb)
 {
-        const char *msg_id;
-        int status = parse_hide_refs_config(var, value, "receive", &hidden_refs);
+	const char *msg_id;
+	int status = parse_hide_refs_config(var, value, "receive", &hidden_refs);
 
-        if (status)
-                return status;
+	if (status)
+		return status;
 
-        if (!lop_receive_pack_config(var, value))
-                return 0;
+	if (!lop_receive_pack_config(var, value))
+		return 0;
 
-        if (strcmp(var, "receive.denydeletes") == 0) {
-                deny_deletes = git_config_bool(var, value);
-                return 0;
-        }
+	if (strcmp(var, "receive.denydeletes") == 0) {
+		deny_deletes = git_config_bool(var, value);
+		return 0;
+	}
 
 	if (strcmp(var, "receive.denynonfastforwards") == 0) {
 		deny_non_fast_forwards = git_config_bool(var, value);
@@ -383,136 +381,24 @@ static void write_head_info(void)
 #define RUN_PROC_RECEIVE_SCHEDULED	1
 #define RUN_PROC_RECEIVE_RETURNED	2
 struct command {
-        struct command *next;
-        const char *error_string;
-        char *error_string_owned;
-        struct ref_push_report *report;
-        unsigned int skip_update:1,
-                     did_not_exist:1,
-                     run_proc_receive:2;
-        int index;
-        struct object_id old_oid;
-        struct object_id new_oid;
-        char ref_name[FLEX_ARRAY]; /* more */
+	struct command *next;
+	const char *error_string;
+	char *error_string_owned;
+	struct ref_push_report *report;
+	unsigned int skip_update:1,
+		     did_not_exist:1,
+		     run_proc_receive:2;
+	int index;
+	struct object_id old_oid;
+	struct object_id new_oid;
+	char ref_name[FLEX_ARRAY]; /* more */
 };
-
-static int lop_for_each_new_blob(struct command *commands,
-                                 int (*cb)(const struct lop_blob_info *, void *),
-                                 void *data)
-{
-        struct command *cmd;
-        struct oidset seen = OIDSET_INIT;
-        struct strbuf line = STRBUF_INIT;
-
-        for (cmd = commands; cmd; cmd = cmd->next) {
-                struct child_process cp = CHILD_PROCESS_INIT;
-                struct strbuf range = STRBUF_INIT;
-                FILE *out;
-
-                if (cmd->skip_update)
-                        continue;
-                if (is_null_oid(&cmd->new_oid))
-                        continue;
-
-                cp.git_cmd = 1;
-                cp.out = -1;
-                strvec_push(&cp.args, "rev-list");
-                strvec_push(&cp.args, "--objects");
-                if (!is_null_oid(&cmd->old_oid)) {
-                        strbuf_addf(&range, "%s..%s", oid_to_hex(&cmd->old_oid),
-                                    oid_to_hex(&cmd->new_oid));
-                        strvec_push(&cp.args, range.buf);
-                } else {
-                        strvec_push(&cp.args, oid_to_hex(&cmd->new_oid));
-                }
-
-                if (start_command(&cp)) {
-                        strbuf_release(&range);
-                        strbuf_release(&line);
-                        oidset_clear(&seen);
-                        return -1;
-                }
-
-                out = xfdopen(cp.out, "r");
-                while (strbuf_getline_lf(&line, out) != EOF) {
-                        struct lop_blob_info info;
-                        char *sep;
-                        struct object_info oi = OBJECT_INFO_INIT;
-                        enum object_type type;
-                        unsigned long size = 0;
-
-                        if (!line.len)
-                                continue;
-                        sep = strchr(line.buf, ' ');
-                        if (sep)
-                                *sep = '\0';
-                        if (get_oid_hex(line.buf, &info.oid))
-                                continue;
-                        if (oidset_insert(&seen, &info.oid))
-                                continue;
-
-                        oi.typep = &type;
-                        oi.sizep = &size;
-                        if (odb_read_object_info_extended(the_repository->objects,
-                                                          &info.oid, &oi,
-                                                          OBJECT_INFO_LOOKUP_REPLACE |
-                                                          OBJECT_INFO_DIE_IF_CORRUPT))
-                                continue;
-                        if (type != OBJ_BLOB)
-                                continue;
-
-                        info.size = size;
-                        info.path = sep ? sep + 1 : NULL;
-                        if (cb(&info, data)) {
-                                fclose(out);
-                                finish_command(&cp);
-                                strbuf_release(&range);
-                                strbuf_release(&line);
-                                oidset_clear(&seen);
-                                return -1;
-                        }
-                }
-
-                fclose(out);
-                finish_command(&cp);
-                strbuf_release(&range);
-        }
-
-        strbuf_release(&line);
-        oidset_clear(&seen);
-        return 0;
-}
-
-static void lop_process_push(struct command *commands)
-{
-        struct lop_offload_ctx *ctx;
-
-        ctx = lop_offload_start(the_repository);
-        if (!ctx)
-                return;
-
-        if (lop_for_each_new_blob(commands, lop_offload_blob_cb, ctx) ||
-            lop_offload_had_error(ctx)) {
-                struct strbuf msg = STRBUF_INIT;
-                const struct strbuf *err = lop_offload_error(ctx);
-
-                if (err && err->len)
-                        strbuf_addbuf(&msg, err);
-                else
-                        strbuf_addstr(&msg, "lop offload failed");
-
-                lop_offload_abort(ctx);
-                die("%s", msg.buf);
-        }
-
-        lop_offload_finish(ctx);
-}
 
 static void proc_receive_ref_append(const char *prefix)
 {
-        struct proc_receive_ref *ref_pattern;
-        char *p;
-        int len;
+	struct proc_receive_ref *ref_pattern;
+	char *p;
+	int len;
 
 	CALLOC_ARRAY(ref_pattern, 1);
 	p = strchr(prefix, ':');
@@ -546,8 +432,8 @@ static void proc_receive_ref_append(const char *prefix)
 		end = proc_receive_ref;
 		while (end->next)
 			end = end->next;
-                end->next = ref_pattern;
-        }
+		end->next = ref_pattern;
+	}
 }
 
 static int proc_receive_ref_matches(struct command *cmd)
@@ -2792,11 +2678,11 @@ int cmd_receive_pack(int argc,
 			update_shallow_info(commands, &si, &ref);
 		}
 		use_keepalive = KEEPALIVE_ALWAYS;
-                execute_commands(commands, unpack_status, &si,
-                                 &push_options);
-                if (!unpack_status)
-                        lop_process_push(commands);
-                delete_tempfile(&pack_lockfile);
+		execute_commands(commands, unpack_status, &si,
+				 &push_options);
+		if (!unpack_status)
+			lop_process_push(the_repository, commands);
+		delete_tempfile(&pack_lockfile);
 		sigchain_push(SIGPIPE, SIG_IGN);
 		if (report_status_v2)
 			report_v2(commands, unpack_status);

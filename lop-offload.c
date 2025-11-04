@@ -7,12 +7,33 @@
 #include "object-file.h"
 #include "object.h"
 #include "odb.h"
+#include "oidset.h"
 #include "promisor-odb.h"
 #include "promisor-remote.h"
 #include "repository.h"
+#include "run-command.h"
 #include "string-list.h"
+#include "strvec.h"
 #include "trace.h"
 #include "trace2.h"
+
+/*
+ * Minimal definition of struct command from builtin/receive-pack.c
+ * needed to iterate over pushed refs.
+ */
+struct command {
+    struct command *next;
+    const char *error_string;
+    char *error_string_owned;
+    void *report;
+    unsigned int skip_update:1,
+                 did_not_exist:1,
+                 run_proc_receive:2;
+    int index;
+    struct object_id old_oid;
+    struct object_id new_oid;
+    char ref_name[FLEX_ARRAY];
+};
 
 struct lop_route_rule {
     char *remote;
@@ -448,4 +469,117 @@ void lop_offload_abort(struct lop_offload_ctx *ctx)
     lop_stats_clear(&ctx->stats);
     strbuf_release(&ctx->err);
     free(ctx);
+}
+
+static int lop_for_each_new_blob(struct repository *repo,
+                                 struct command *commands,
+                                 int (*cb)(const struct lop_blob_info *, void *),
+                                 void *data)
+{
+    struct command *cmd;
+    struct oidset seen = OIDSET_INIT;
+    struct strbuf line = STRBUF_INIT;
+
+    for (cmd = commands; cmd; cmd = cmd->next) {
+        struct child_process cp = CHILD_PROCESS_INIT;
+        struct strbuf range = STRBUF_INIT;
+        FILE *out;
+
+        if (cmd->skip_update)
+            continue;
+        if (is_null_oid(&cmd->new_oid))
+            continue;
+
+        cp.git_cmd = 1;
+        cp.out = -1;
+        strvec_push(&cp.args, "rev-list");
+        strvec_push(&cp.args, "--objects");
+        if (!is_null_oid(&cmd->old_oid)) {
+            strbuf_addf(&range, "%s..%s", oid_to_hex(&cmd->old_oid),
+                        oid_to_hex(&cmd->new_oid));
+            strvec_push(&cp.args, range.buf);
+        } else {
+            strvec_push(&cp.args, oid_to_hex(&cmd->new_oid));
+        }
+
+        if (start_command(&cp)) {
+            strbuf_release(&range);
+            strbuf_release(&line);
+            oidset_clear(&seen);
+            return -1;
+        }
+
+        out = xfdopen(cp.out, "r");
+        while (strbuf_getline_lf(&line, out) != EOF) {
+            struct lop_blob_info info;
+            char *sep;
+            struct object_info oi = OBJECT_INFO_INIT;
+            enum object_type type;
+            unsigned long size = 0;
+
+            if (!line.len)
+                continue;
+            sep = strchr(line.buf, ' ');
+            if (sep)
+                *sep = '\0';
+            if (get_oid_hex_algop(line.buf, &info.oid, repo->hash_algo))
+                continue;
+            if (oidset_insert(&seen, &info.oid))
+                continue;
+
+            oi.typep = &type;
+            oi.sizep = &size;
+            if (odb_read_object_info_extended(repo->objects,
+                                              &info.oid, &oi,
+                                              OBJECT_INFO_LOOKUP_REPLACE |
+                                              OBJECT_INFO_DIE_IF_CORRUPT))
+                continue;
+            if (type != OBJ_BLOB)
+                continue;
+
+            info.size = size;
+            info.path = sep ? sep + 1 : NULL;
+            if (cb(&info, data)) {
+                fclose(out);
+                finish_command(&cp);
+                strbuf_release(&range);
+                strbuf_release(&line);
+                oidset_clear(&seen);
+                return -1;
+            }
+        }
+
+        fclose(out);
+        finish_command(&cp);
+        strbuf_release(&range);
+    }
+
+    strbuf_release(&line);
+    oidset_clear(&seen);
+    return 0;
+}
+
+void lop_process_push(struct repository *repo, struct command *commands)
+{
+    struct lop_offload_ctx *ctx;
+
+    ctx = lop_offload_start(repo);
+    if (!ctx)
+        return;
+
+    if (lop_for_each_new_blob(repo, commands, lop_offload_blob_cb, ctx) ||
+        lop_offload_had_error(ctx)) {
+        struct strbuf msg = STRBUF_INIT;
+        const struct strbuf *err = lop_offload_error(ctx);
+
+        if (err && err->len)
+            strbuf_addbuf(&msg, err);
+        else
+            strbuf_addstr(&msg, "lop offload failed");
+
+        lop_offload_abort(ctx);
+        die("%s", msg.buf);
+    }
+
+    lop_offload_finish(ctx);
 }

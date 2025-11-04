@@ -6,6 +6,7 @@
 #include "strbuf.h"
 
 struct repository;
+struct command;
 
 struct lop_blob_info {
     struct object_id oid;
@@ -16,6 +17,8 @@ struct lop_blob_info {
 struct lop_offload_ctx;
 
 int lop_receive_pack_config(const char *var, const char *value);
+
+void lop_process_push(struct repository *repo, struct command *commands);
 
 struct lop_offload_ctx *lop_offload_start(struct repository *r);
 int lop_offload_blob_cb(const struct lop_blob_info *blob, void *data);
