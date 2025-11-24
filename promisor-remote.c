@@ -9,6 +9,7 @@
 #include "trace2.h"
 #include "transport.h"
 #include "strvec.h"
+#include "strbuf.h"
 #include "packfile.h"
 #include "environment.h"
 #include "url.h"
@@ -769,23 +770,110 @@ char *promisor_remote_reply(const char *info)
 
 void mark_promisor_remotes_as_accepted(struct repository *r, const char *remotes)
 {
-	struct string_list accepted_remotes = STRING_LIST_INIT_DUP;
-	struct string_list_item *item;
+        struct string_list accepted_remotes = STRING_LIST_INIT_DUP;
+        struct string_list_item *item;
 
-	string_list_split(&accepted_remotes, remotes, ";", -1);
+        string_list_split(&accepted_remotes, remotes, ";", -1);
 
-	for_each_string_list_item(item, &accepted_remotes) {
-		char *decoded_remote = url_percent_decode(item->string);
-		struct promisor_remote *p = repo_promisor_remote_find(r, decoded_remote);
+        for_each_string_list_item(item, &accepted_remotes) {
+                char *decoded_remote = url_percent_decode(item->string);
+                struct promisor_remote *p = repo_promisor_remote_find(r, decoded_remote);
 
-		if (p)
-			p->accepted = 1;
-		else
-			warning(_("accepted promisor remote '%s' not found"),
-				decoded_remote);
+                if (p)
+                        p->accepted = 1;
+                else
+                        warning(_("accepted promisor remote '%s' not found"),
+                                decoded_remote);
 
-		free(decoded_remote);
-	}
+                free(decoded_remote);
+        }
 
-	string_list_clear(&accepted_remotes, 0);
+        string_list_clear(&accepted_remotes, 0);
+}
+
+static int remote_is_already_configured(struct repository *repo, const char *remote_name)
+{
+        const char *value;
+        char *key = xstrfmt("remote.%s.url", remote_name);
+        int configured = 0;
+
+        if (!repo_config_get_string_tmp(repo, key, &value) && value && *value)
+                configured = 1;
+
+        free(key);
+        return configured;
+}
+
+static void set_remote_config_value(struct repository *repo, const char *remote_name,
+                                   const char *suffix, const char *value)
+{
+        char *key = xstrfmt("remote.%s.%s", remote_name, suffix);
+
+        repo_config_set(repo, key, value);
+        free(key);
+}
+
+static void set_remote_fetch_default(struct repository *repo, const char *remote_name)
+{
+        char *key = xstrfmt("remote.%s.fetch", remote_name);
+        struct strbuf value = STRBUF_INIT;
+
+        strbuf_addf(&value, "+refs/heads/*:refs/remotes/%s/*", remote_name);
+        repo_config_set_multivar(repo, key, value.buf, "^$", 0);
+
+        free(key);
+        strbuf_release(&value);
+}
+
+static void configure_remote_from_advertisement(struct repository *repo,
+                                               struct promisor_info *info)
+{
+        set_remote_config_value(repo, info->name, "url", info->url);
+        set_remote_config_value(repo, info->name, "promisor", "true");
+        set_remote_fetch_default(repo, info->name);
+
+        if (info->filter)
+                set_remote_config_value(repo, info->name,
+                                        promisor_field_filter, info->filter);
+
+        if (info->token)
+                set_remote_config_value(repo, info->name,
+                                        promisor_field_token, info->token);
+}
+
+void promisor_remote_configure_from_info(struct repository *repo, const char *info)
+{
+        struct string_list remote_info = STRING_LIST_INIT_DUP;
+        struct string_list_item *item;
+        int create_remotes;
+        int created = 0;
+
+        if (!info || !*info)
+                return;
+
+        if (repo_config_get_bool(repo, "promisor.createremotes", &create_remotes) ||
+            !create_remotes)
+                return;
+
+        string_list_split(&remote_info, info, ";", -1);
+
+        for_each_string_list_item(item, &remote_info) {
+                struct promisor_info *advertised =
+                        parse_one_advertised_remote(item->string);
+
+                if (!advertised)
+                        continue;
+
+                if (!remote_is_already_configured(repo, advertised->name)) {
+                        configure_remote_from_advertisement(repo, advertised);
+                        created = 1;
+                }
+
+                promisor_info_free(advertised);
+        }
+
+        string_list_clear(&remote_info, 0);
+
+        if (created)
+                repo_promisor_remote_reinit(repo);
 }

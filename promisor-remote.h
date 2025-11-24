@@ -67,4 +67,10 @@ void mark_promisor_remotes_as_accepted(struct repository *repo, const char *remo
  */
 int repo_has_accepted_promisor_remote(struct repository *r);
 
+/*
+ * Create promisor remotes in the configuration based on the
+ * "promisor-remote" capability advertisement received from a server.
+ */
+void promisor_remote_configure_from_info(struct repository *repo, const char *info);
+
 #endif /* PROMISOR_REMOTE_H */

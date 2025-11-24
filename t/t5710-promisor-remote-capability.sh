@@ -327,10 +327,10 @@ test_expect_success "clone with promisor.sendFields" '
 '
 
 test_expect_success "clone with promisor.checkFields" '
-	git -C server config promisor.advertise true &&
-	test_when_finished "rm -rf client" &&
+        git -C server config promisor.advertise true &&
+        test_when_finished "rm -rf client" &&
 
-	git -C server remote add otherLop "https://invalid.invalid"  &&
+        git -C server remote add otherLop "https://invalid.invalid"  &&
 	git -C server config remote.otherLop.token "fooBar" &&
 	git -C server config remote.otherLop.stuff "baz" &&
 	git -C server config remote.otherLop.partialCloneFilter "blob:limit=10k" &&
@@ -357,14 +357,38 @@ test_expect_success "clone with promisor.checkFields" '
 	test_grep ! "clone> promisor-remote=lop;otherLop" trace &&
 
 	# Check that the largest object is still missing on the server
-	check_missing_objects server 1 "$oid"
+        check_missing_objects server 1 "$oid"
+'
+
+test_expect_success "clone creates promisor remotes from hints" '
+        git -C server config promisor.advertise true &&
+        test_when_finished "rm -rf client" &&
+
+        test_when_finished "git -C server config --unset-all promisor.sendFields" &&
+        test_config -C server promisor.sendFields "partialCloneFilter, token" &&
+        git -C server config remote.lop.partialCloneFilter "blob:none" &&
+        git -C server config remote.lop.token "lop-token" &&
+        test_when_finished "git -C server config --unset remote.lop.token" &&
+
+        GIT_NO_LAZY_FETCH=0 git clone \
+                -c promisor.acceptfromserver=All \
+                -c promisor.createRemotes=true \
+                --no-local --filter="blob:limit=5k" server client &&
+
+        test_cmp_config -C client "file://$(pwd)/lop" remote.lop.url &&
+        test_cmp_config -C client true remote.lop.promisor &&
+        test_cmp_config -C client "+refs/heads/*:refs/remotes/lop/*" remote.lop.fetch &&
+        test_cmp_config -C client blob:none remote.lop.partialCloneFilter &&
+        test_cmp_config -C client lop-token remote.lop.token &&
+
+        check_missing_objects server 1 "$oid"
 '
 
 test_expect_success "clone with promisor.advertise set to 'true' but don't delete the client" '
-	git -C server config promisor.advertise true &&
+        git -C server config promisor.advertise true &&
 
-	# Clone from server to create a client
-	GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
+        # Clone from server to create a client
+        GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
 		-c remote.lop.fetch="+refs/heads/*:refs/remotes/lop/*" \
 		-c remote.lop.url="file://$(pwd)/lop" \
 		-c promisor.acceptfromserver=All \
