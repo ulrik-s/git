@@ -1,0 +1,83 @@
+Native ODB API overview
+=========================
+
+Git's native object database (ODB) exposes `struct object_database` and
+`struct odb_source` as the central data structures for working with local and
+alternate object stores.【F:odb.h†L102-L160】 The API provides helpers to create a
+database (`odb_new()`), attach paths as object sources, and read or write
+objects through functions such as `odb_write_object_ext()` that operate on the
+local repository's primary object directory.【F:odb.h†L169-L477】
+
+A consumer that wants to experiment with custom storage can allocate its own ODB
+using `odb_new()`, populate `struct odb_source` entries, and reuse Git's object
+hashing helpers (for example `hash_object_file()`) to stay compatible with Git's
+loose-object format.【F:object-file.h†L1-L126】【F:odb.c†L983-L1007】
+
+Simple ODB example helper
+-------------------------
+
+The `test-tool simple-odb` helper demonstrates a minimal object database that
+stores entries using Git's loose-object layout. It hashes payloads using the
+repository's hash algorithm, compresses the `"<type> <size>\0<data>"` payload,
+and writes the result underneath an `objects` directory it maintains on disk.
+The helper exposes commands to initialise the store, append new objects, and
+record the resulting directory as an alternate for the current repository so
+that Git can discover the objects without further patches. It also provides a
+`lop-write` command that dispatches blobs according to a size threshold: small
+payloads are written to the repository's primary object store while larger
+payloads are diverted into the simple store and automatically added as an
+alternate.【F:simple-odb.c†L1-L158】【F:t/helper/test-simple-odb.c†L1-L157】
+
+The accompanying regression test (`t/t0039-simple-odb.sh`) uses the helper to
+write and read blobs, verifying that repositories can read from the alternate
+store via `git cat-file` once the helper has created the loose object and added
+its path to `objects/info/alternates`.【F:t/t0039-simple-odb.sh†L1-L43】
+
+Activating the helper via alternates
+------------------------------------
+
+The helper relies entirely on Git's existing alternates mechanism: adding the
+simple store's `objects` directory to `objects/info/alternates` (or setting
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`) is enough for Git to consult it during
+object lookups. No changes to `odb.c` are required because the helper writes
+objects in the same layout as a regular loose object directory. The test suite
+demonstrates this by initialising a repository, adding the helper-managed
+directory as an alternate, and reading objects through `git cat-file` without
+any additional plumbing.【F:t/helper/test-simple-odb.c†L64-L89】【F:t/t0039-simple-odb.sh†L8-L43】
+
+Large Object Promisor experiments
+---------------------------------
+
+The Large Object Promisor (LOP) design aims to keep very large blobs on
+dedicated promisor remotes while the primary remote serves the remainder of the
+repository.【F:Documentation/technical/large-object-promisors.adoc†L15-L114】 The
+`lop-write` helper command mirrors that split locally: a caller passes the
+simple store path and a `blob:limit`-style threshold, and the helper stores
+objects larger than the limit in the alternate while leaving smaller objects in
+the main store. Because the alternate is recorded automatically, subsequent
+commands like `git cat-file` can resolve those large blobs transparently, which
+makes it easy to prototype LOP-aware workflows without modifying Git's core
+ODB routines.【F:t/helper/test-simple-odb.c†L90-L157】【F:t/t0039-simple-odb.sh†L45-L80】
+
+Comparison with other ODB APIs
+------------------------------
+
+* **libgit2** exposes an `git_odb` type with pluggable backends and callbacks
+  that are registered globally. Implementers provide `read`, `write`, and
+  iteration function pointers, but the integration is centered around a single
+  multi-backend registry instead of Git's notion of one primary source plus a
+  linked list of alternates.
+* **gitoxide** (gix) models its ODB as a layered `gix_odb::Store`, combining
+  a cache and multiple stores selected via configuration. Custom stores
+  implement the `Store` trait and are typically used by wiring them into a
+  `Repository` configuration object.
+
+Key compatibility considerations
+--------------------------------
+
+Git's native API must preserve backwards compatibility with repositories that
+may be accessed by older clients, so helpers should reuse Git's hashing
+functions and object formats rather than inventing new on-disk layouts. The
+example therefore hashes payloads with the repository's configured algorithm and
+reuses the conventional loose-object directory structure, letting existing
+clients take advantage of the alternate without special knowledge.【F:simple-odb.c†L63-L135】
