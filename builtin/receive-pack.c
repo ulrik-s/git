@@ -2675,6 +2675,10 @@ int cmd_receive_pack(int argc,
 		use_keepalive = KEEPALIVE_ALWAYS;
 		execute_commands(commands, unpack_status, &si,
 				 &push_options);
+		if (!unpack_status) {
+			if (run_receive_hook(commands, "lop-offload", 0, &push_options))
+				unpack_status = "lop-offload hook failed";
+		}
 		delete_tempfile(&pack_lockfile);
 		sigchain_push(SIGPIPE, SIG_IGN);
 		if (report_status_v2)

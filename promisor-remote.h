@@ -31,8 +31,11 @@ int repo_has_promisor_remote(struct repository *r);
  * If oid_nr is 0, this function returns immediately.
  */
 void promisor_remote_get_direct(struct repository *repo,
-				const struct object_id *oids,
-				int oid_nr);
+                                const struct object_id *oids,
+                                int oid_nr);
+
+void promisor_remote_capability_reset(void);
+const char *promisor_remote_advertised_filter(void);
 
 /*
  * Prepare a "promisor-remote" advertisement by a server.
