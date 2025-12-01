@@ -89,3 +89,13 @@ variable. The fields are checked only if the
 `promisor.acceptFromServer` config variable is not set to "None". If
 set to "None", this config variable has no effect. See
 linkgit:gitprotocol-v2[5].
+
+promisor.createRemotes::
+        If set to "true", linkgit:git-clone[1] will create entries for
+        any promisor remotes advertised by the server via the
+        "promisor-remote" capability. Each remote is added to the new
+        repository's configuration with its advertised URL, marked as a
+        promisor remote, and given a default fetch refspec
+        (`+refs/heads/*:refs/remotes/<name>/*`). Optional fields such as
+        `partialCloneFilter` and `token` are recorded when present. The
+        remote is only created if it is not already configured locally.
