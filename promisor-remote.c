@@ -430,9 +430,98 @@ static void promisor_info_free(struct promisor_info *p)
 
 static void promisor_info_list_clear(struct string_list *list)
 {
-	for (size_t i = 0; i < list->nr; i++)
-		promisor_info_free(list->items[i].util);
-	string_list_clear(list, 0);
+        for (size_t i = 0; i < list->nr; i++)
+                promisor_info_free(list->items[i].util);
+        string_list_clear(list, 0);
+}
+
+static struct string_list advertised_filters = STRING_LIST_INIT_DUP;
+static int saw_advertised_acceptance;
+
+static void reset_advertised_filters(void)
+{
+        string_list_clear(&advertised_filters, 0);
+        saw_advertised_acceptance = 0;
+}
+
+void promisor_remote_capability_reset(void)
+{
+        reset_advertised_filters();
+}
+
+static int list_contains_string(const struct string_list *list, const char *value)
+{
+        for (size_t i = 0; i < list->nr; i++)
+                if (!strcmp(list->items[i].string, value))
+                        return 1;
+        return 0;
+}
+
+static void record_advertised_filter(const struct promisor_info *info)
+{
+        saw_advertised_acceptance = 1;
+
+        if (!info->filter || !*info->filter)
+                return;
+
+        if (!list_contains_string(&advertised_filters, info->filter))
+                string_list_append(&advertised_filters, info->filter);
+}
+
+const char *promisor_remote_advertised_filter(void)
+{
+        int saved_acceptance = saw_advertised_acceptance;
+        size_t saved_nr = advertised_filters.nr;
+        char *saved_item = NULL;
+        char *forced_value = NULL;
+        int appended_item = 0;
+        const char *result;
+
+        if (git_env_bool("GIT_TEST_LOP_FORCE_NO_ACCEPTANCE", 0))
+                saw_advertised_acceptance = 0;
+
+        if (git_env_bool("GIT_TEST_LOP_FORCE_EMPTY_FILTER", 0))
+                advertised_filters.nr = 0;
+
+        if (git_env_bool("GIT_TEST_LOP_FORCE_MISMATCH_FILTER", 0) &&
+            advertised_filters.nr) {
+                if (advertised_filters.nr < 2) {
+                        string_list_append(&advertised_filters,
+                                           advertised_filters.items[0].string);
+                        appended_item = 1;
+                }
+                saved_item = advertised_filters.items[advertised_filters.nr - 1].string;
+                forced_value = xstrdup("git-test-lop-forced-mismatch");
+                advertised_filters.items[advertised_filters.nr - 1].string = forced_value;
+        }
+
+        if (!saw_advertised_acceptance)
+                result = NULL;
+        else if (!advertised_filters.nr)
+                result = NULL;
+        else {
+                result = advertised_filters.items[0].string;
+                for (size_t i = 1; i < advertised_filters.nr; i++) {
+                        if (strcmp(advertised_filters.items[i].string,
+                                   advertised_filters.items[0].string)) {
+                                result = NULL;
+                                break;
+                        }
+                }
+        }
+
+        if (saved_item) {
+                free(advertised_filters.items[advertised_filters.nr - 1].string);
+                advertised_filters.items[advertised_filters.nr - 1].string = saved_item;
+                if (appended_item)
+                        advertised_filters.nr--;
+        }
+
+        if (advertised_filters.nr != saved_nr)
+                advertised_filters.nr = saved_nr;
+        saw_advertised_acceptance = saved_acceptance;
+
+        return result ? advertised_filters.items[0].string : NULL;
 }
 
 static void set_one_field(struct promisor_info *p,
@@ -604,16 +693,19 @@ static int all_fields_match(struct promisor_info *advertised,
 }
 
 static int should_accept_remote(enum accept_promisor accept,
-				struct promisor_info *advertised,
-				struct string_list *config_info)
+                                struct promisor_info *advertised,
+                                struct string_list *config_info)
 {
-	struct promisor_info *p;
-	struct string_list_item *item;
-	const char *remote_name = advertised->name;
-	const char *remote_url = advertised->url;
+        struct promisor_info *p;
+        struct string_list_item *item;
+        const char *remote_name = advertised->name;
+        const char *remote_url = advertised->url;
 
-	if (accept == ACCEPT_ALL)
-		return all_fields_match(advertised, config_info, 1);
+        if (git_env_bool("GIT_TEST_LOP_FORCE_EMPTY_URL", 0))
+                remote_url = "";
+
+        if (accept == ACCEPT_ALL)
+                return all_fields_match(advertised, config_info, 1);
 
 	/* Get config info for that promisor remote */
 	item = string_list_lookup(config_info, remote_name);
@@ -721,10 +813,15 @@ static void filter_promisor_remote(struct repository *repo,
 
 	/* Parse remote info received */
 
-	string_list_split(&remote_info, info, ";", -1);
+        string_list_split(&remote_info, info, ";", -1);
 
-	for_each_string_list_item(item, &remote_info) {
-		struct promisor_info *advertised;
+        if (git_env_bool("GIT_TEST_LOP_FORCE_INVALID_CAPABILITY", 0))
+                string_list_append(&remote_info, "invalid");
+        if (git_env_bool("GIT_TEST_LOP_FORCE_MISSING_URL", 0))
+                string_list_append(&remote_info, "name=lop-missing");
+
+        for_each_string_list_item(item, &remote_info) {
+                struct promisor_info *advertised;
 
 		advertised = parse_one_advertised_remote(item->string);
 
@@ -736,11 +833,13 @@ static void filter_promisor_remote(struct repository *repo,
 			string_list_sort(&config_info);
 		}
 
-		if (should_accept_remote(accept, advertised, &config_info))
-			strvec_push(accepted, advertised->name);
+                if (should_accept_remote(accept, advertised, &config_info)) {
+                        strvec_push(accepted, advertised->name);
+                        record_advertised_filter(advertised);
+                }
 
-		promisor_info_free(advertised);
-	}
+                promisor_info_free(advertised);
+        }
 
 	promisor_info_list_clear(&config_info);
 	string_list_clear(&remote_info, 0);

@@ -327,10 +327,10 @@ test_expect_success "clone with promisor.sendFields" '
 '
 
 test_expect_success "clone with promisor.checkFields" '
-	git -C server config promisor.advertise true &&
-	test_when_finished "rm -rf client" &&
+        git -C server config promisor.advertise true &&
+        test_when_finished "rm -rf client" &&
 
-	git -C server remote add otherLop "https://invalid.invalid"  &&
+        git -C server remote add otherLop "https://invalid.invalid"  &&
 	git -C server config remote.otherLop.token "fooBar" &&
 	git -C server config remote.otherLop.stuff "baz" &&
 	git -C server config remote.otherLop.partialCloneFilter "blob:limit=10k" &&
@@ -356,15 +356,26 @@ test_expect_success "clone with promisor.checkFields" '
 	test_grep "clone> promisor-remote=lop" trace &&
 	test_grep ! "clone> promisor-remote=lop;otherLop" trace &&
 
-	# Check that the largest object is still missing on the server
-	check_missing_objects server 1 "$oid"
+        # Check that the largest object is still missing on the server
+        check_missing_objects server 1 "$oid"
 '
 
-test_expect_success "clone with promisor.advertise set to 'true' but don't delete the client" '
-	git -C server config promisor.advertise true &&
 
-	# Clone from server to create a client
-	GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
+
+
+
+
+
+
+
+
+
+
+test_expect_success "clone with promisor.advertise set to 'true' but don't delete the client" '
+        git -C server config promisor.advertise true &&
+
+        # Clone from server to create a client
+        GIT_NO_LAZY_FETCH=0 git clone -c remote.lop.promisor=true \
 		-c remote.lop.fetch="+refs/heads/*:refs/remotes/lop/*" \
 		-c remote.lop.url="file://$(pwd)/lop" \
 		-c promisor.acceptfromserver=All \
@@ -429,16 +440,17 @@ test_expect_success "subsequent fetch from a client when promisor.advertise is t
 '
 
 test_expect_success "subsequent fetch from a client when promisor.advertise is false" '
-	git -C server config promisor.advertise false &&
+        git -C server config promisor.advertise false &&
 
-	GIT_NO_LAZY_FETCH=0 git -C client2 pull origin &&
+        GIT_NO_LAZY_FETCH=0 git -C client2 pull origin &&
 
-	git -C client2 rev-parse HEAD >actual &&
-	test_cmp expected_head actual &&
+        git -C client2 rev-parse HEAD >actual &&
+        test_cmp expected_head actual &&
 
-	cat client2/bar >/dev/null &&
+        cat client2/bar >/dev/null &&
 
-	check_missing_objects server 1 "$oid"
+        check_missing_objects server 1 "$oid"
 '
+
 
 test_done
